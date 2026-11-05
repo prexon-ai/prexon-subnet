@@ -1,0 +1,82 @@
+{
+  "target": {
+    "engine_version": "0.5.23",
+    "worker_image": "replace-with-qualified-worker-image@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "lium_template_id": "",
+    "hardware": {
+      "gpu_type": "H100",
+      "gpu_count": 1,
+      "min_vram_gb": 80,
+      "min_cpus": 8,
+      "min_ram_gb": 64,
+      "min_disk_gb": 200,
+      "max_price_per_gpu_hour": 3,
+      "require_nvlink": false
+    },
+    "tensor_parallel_size": 1,
+    "dtype": "bfloat16",
+    "context_length": 8192,
+    "memory_fraction": 0.8,
+    "draft_tokens": 8,
+    "workloads": [
+      {
+        "name": "low",
+        "concurrency": 1,
+        "requests": 512,
+        "output_tokens": 256,
+        "weight": 0.2
+      },
+      {
+        "name": "medium",
+        "concurrency": 8,
+        "requests": 512,
+        "output_tokens": 256,
+        "weight": 0.3
+      },
+      {
+        "name": "high",
+        "concurrency": 32,
+        "requests": 512,
+        "output_tokens": 256,
+        "weight": 0.5
+      }
+    ],
+    "policy": {
+      "improvement_margin": 0.015,
+      "confidence": 0.95,
+      "max_regression": 0.05,
+      "max_reference_drift": 0.05,
+      "repeats": 5,
+      "warmup_requests": 2,
+      "award_seconds": 432000,
+      "max_checkpoint_bytes": 4294967296,
+      "max_job_seconds": 7200
+    },
+    "public_reference": null,
+    "qualification_artifact": null,
+    "slot": 1,
+    "allocation": 100,
+    "model_id": "replace-with-target-model-id",
+    "revision": "0000000000000000000000000000000000000000",
+    "methods": [
+      "dflash2"
+    ],
+    "datasets": {
+      "manifest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "category_weights": {
+        "chat": 0.4,
+        "code": 0.35,
+        "math": 0.25
+      },
+      "min_unique_prompts": 512,
+      "seed_block_delay": 1
+    }
+  },
+  "draft_head": "../runtime/heads/candidate",
+  "baseline_head": null,
+  "mode": "head",
+  "backend": "lium",
+  "output_dir": "../runtime/evaluations",
+  "session_seconds": 14400,
+  "session_max_cost": 100
+}

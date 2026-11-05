@@ -1,0 +1,25 @@
+{
+  "model_id": "replace-with-target-model-id",
+  "revision": "0000000000000000000000000000000000000000",
+  "chat_template_kwargs": {},
+  "sources": [
+    {
+      "kind": "wildchat", "category": "chat",
+      "repo_id": "allenai/WildChat-4.8M",
+      "revision": "c827c6df8fcf008219ffaffa4d1dd77491099367",
+      "splits": ["train"]
+    },
+    {
+      "kind": "code", "category": "code",
+      "repo_id": "nvidia/OpenCodeInstruct",
+      "revision": "8f3ba5bafe4d6e8db46082cf7ae6741bc370604d",
+      "splits": ["train"]
+    },
+    {
+      "kind": "math", "category": "math",
+      "repo_id": "nvidia/OpenMathReasoning",
+      "revision": "d3d08664755704f422af97d43a7ff0ded4bd95df",
+      "splits": ["cot", "additional_problems"]
+    }
+  ]
+}

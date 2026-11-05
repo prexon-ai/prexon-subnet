@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "prexon-subnet"
+version = "0.1.0"
+description = "Speculative drafter competition for Bittensor"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "python-dotenv>=1.1,<2",
+  "httpx>=0.28,<1",
+  "scipy>=1.16,<2",
+  "numpy>=2,<3",
+]
+
+[project.optional-dependencies]
+validator = ["boto3>=1.40,<2", "bittensor==10.2.1"]
+miner = ["bittensor==10.2.1", "PyYAML>=6,<7", "huggingface-hub>=0.34,<2"]
+api = ["fastapi>=0.135,<0.136", "starlette>=0.46,<1", "uvicorn>=0.34,<1", "boto3>=1.40,<2", "bittensor-wallet==4.0.1"]
+storage = ["boto3>=1.40,<2"]
+datasets = ["datasets>=4,<5", "transformers>=4.57,<6", "Jinja2>=3.1,<4"]
+
+[project.scripts]
+prexon-validator = "validator.main:main"
+prexon-worker = "validator.worker:main"
+prexon-miner = "miner.cli:main"
+prexon-api = "api.main:main"
+prexon-evaluate = "evaluation.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "ruff>=0.14,<1", "mypy>=1.18,<2", "types-PyYAML>=6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["validator", "miner", "api", "shared", "evaluation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib -m 'not gpu and not network'"
+markers = ["gpu: requires an explicitly configured GPU runtime", "network: uses external services"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["shared", "validator", "miner", "api", "evaluation"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "bittensor.*", "scipy.*", "datasets.*", "transformers.*"]
+ignore_missing_imports = true

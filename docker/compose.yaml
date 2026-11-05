@@ -1,0 +1,53 @@
+name: prexon-subnet
+services:
+  validator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.validator
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PREXON_STATE_PATH: /data/validator.sqlite3
+      PREXON_DASHBOARD_PATH: /data/public/dashboard.json
+      PREXON_ARTIFACT_ROOT: ${PREXON_ARTIFACT_ROOT:-/data/artifacts}
+      PREXON_PUBLIC_ARTIFACT_ROOT: ${PREXON_PUBLIC_ARTIFACT_ROOT:-/data/public/artifacts}
+      PREXON_UPLOAD_STAGING_ROOT: ${PREXON_UPLOAD_STAGING_ROOT:-}
+      PREXON_UPLOAD_POLICY_PATH: /data/intake-policy/upload-policy.json
+      PREXON_DATASET_CACHE: /data/datasets
+    volumes:
+      - ../runtime:/data
+      - ../profiles:/app/profiles:ro
+    restart: unless-stopped
+    stop_grace_period: 120s
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    environment:
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-https://s3.hippius.com}
+      S3_REGION: ${S3_REGION:-decentralized}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN:-}
+      PREXON_DASHBOARD_PATH: /data/public/dashboard.json
+      PREXON_PUBLIC_ARTIFACT_ROOT: ${PREXON_PUBLIC_ARTIFACT_ROOT:-/data/public/artifacts}
+      PREXON_UPLOADS_ENABLED: ${PREXON_UPLOADS_ENABLED:-false}
+      PREXON_UPLOAD_STAGING_ROOT: ${PREXON_UPLOAD_STAGING_ROOT:-}
+      PREXON_UPLOAD_POLICY_PATH: /data/intake-policy/upload-policy.json
+      PREXON_UPLOAD_STATE_PATH: /data/api/uploads.sqlite3
+      PREXON_UPLOAD_POLICY_MAX_AGE_SECONDS: ${PREXON_UPLOAD_POLICY_MAX_AGE_SECONDS:-300}
+      PREXON_UPLOAD_URL_TTL_SECONDS: ${PREXON_UPLOAD_URL_TTL_SECONDS:-900}
+      PREXON_UPLOAD_REQUEST_MAX_AGE_SECONDS: ${PREXON_UPLOAD_REQUEST_MAX_AGE_SECONDS:-60}
+      PREXON_UPLOAD_MAX_REQUESTS_PER_HOUR: ${PREXON_UPLOAD_MAX_REQUESTS_PER_HOUR:-4}
+      PREXON_UPLOAD_MAX_BYTES: ${PREXON_UPLOAD_MAX_BYTES:-4297064448}
+      PREXON_API_HOST: 0.0.0.0
+      PREXON_API_PORT: 8000
+    volumes:
+      - ../runtime/public:/data/public:ro
+      # Directory mount preserves visibility after the validator's atomic policy rename.
+      - ../runtime/intake-policy:/data/intake-policy:ro
+      - ../runtime/api:/data/api
+    ports:
+      - "${PREXON_API_HOST:-127.0.0.1}:${PREXON_API_PORT:-8000}:8000"
+    restart: unless-stopped

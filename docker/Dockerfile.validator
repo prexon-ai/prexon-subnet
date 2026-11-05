@@ -1,0 +1,23 @@
+FROM python:3.12.12-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.11.20 /uv /usr/local/bin/uv
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10001 --create-home prexon
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY shared ./shared
+COPY evaluation ./evaluation
+COPY validator ./validator
+COPY miner ./miner
+COPY api ./api
+RUN uv sync --frozen --no-dev --extra validator \
+    && mkdir -p /data/public/artifacts /data/artifacts /data/intake-policy \
+    && chown -R prexon:prexon /data
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 \
+    PREXON_STATE_PATH=/data/validator.sqlite3 \
+    PREXON_ARTIFACT_ROOT=/data/artifacts \
+    PREXON_DASHBOARD_PATH=/data/public/dashboard.json \
+    PREXON_PUBLIC_ARTIFACT_ROOT=/data/public/artifacts \
+    PREXON_UPLOAD_POLICY_PATH=/data/intake-policy/upload-policy.json
+USER prexon
+ENTRYPOINT ["prexon-validator"]

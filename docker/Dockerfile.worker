@@ -1,0 +1,19 @@
+# Pass a digest-pinned CUDA/SGLang image that you have qualified for your target.
+ARG ENGINE_IMAGE
+FROM ${ENGINE_IMAGE}
+COPY --from=ghcr.io/astral-sh/uv:0.11.20 /uv /usr/local/bin/uv
+WORKDIR /opt/prexon
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-server \
+    && mkdir -p /run/sshd && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY shared ./shared
+COPY evaluation ./evaluation
+COPY validator ./validator
+COPY miner/__init__.py ./miner/__init__.py
+COPY api/__init__.py ./api/__init__.py
+RUN uv venv --system-site-packages .venv && uv sync --frozen --no-dev \
+    && .venv/bin/python -c "import sglang; import torch; import validator.worker; import evaluation.remote"
+ENV PATH="/opt/prexon/.venv/bin:$PATH" PYTHONUNBUFFERED=1 HF_HOME=/mnt/huggingface
+# Lium's template starts SSH. Local standalone jobs may override this entrypoint.
+ENTRYPOINT []
+CMD ["sleep", "infinity"]

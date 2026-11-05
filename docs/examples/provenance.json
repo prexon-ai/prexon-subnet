@@ -1,0 +1,8 @@
+{
+  "training_description": "Replace with the training recipe, hyperparameters, and compute used.",
+  "data_sources": ["Replace with dataset identities, revisions, and licenses."],
+  "license": "Replace with the checkpoint's redistribution license.",
+  "parent_artifacts": [],
+  "recipe_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "deployment_notes": "Replace with reproducible instructions for the pinned DFlash2 runtime."
+}
