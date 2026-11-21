@@ -7,13 +7,13 @@ are deliberately absent from the CPU role dependency lock. Check official recipe
 for the chosen model and hardware rather than assuming every target is supported.
 
 Configure miners with command arguments. The default API base is
-`https://prexon.ai/api/v1`; submission authorization goes to
-`https://prexon.ai/api/v1/uploads`. Miners use their Bittensor wallet and do not need
+`https://prexonai.com/api/v1`; submission authorization goes to
+`https://prexonai.com/api/v1/uploads`. Miners use their Bittensor wallet and do not need
 storage credentials or the validator's private benchmark profile.
 
 | Option | Purpose / default |
 | --- | --- |
-| `--api-url` | Full versioned API base; default `https://prexon.ai/api/v1` |
+| `--api-url` | Full versioned API base; default `https://prexonai.com/api/v1` |
 | `--network` | Bittensor network or RPC endpoint; default `finney` |
 | `--netuid` | Supply the actual Prexon subnet ID |
 | `--wallet-name`, `--wallet-hotkey` | Both default to `default` |

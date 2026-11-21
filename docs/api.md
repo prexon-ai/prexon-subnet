@@ -1,6 +1,6 @@
 # API reference
 
-Production base: **`https://prexon.ai/api/v1`**. Local base:
+Production base: **`https://prexonai.com/api/v1`**. Local base:
 `http://127.0.0.1:8000/api/v1`. Reverse proxies must preserve `/api`.
 
 The validator and API share `.env` on one machine:

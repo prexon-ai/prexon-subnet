@@ -46,7 +46,7 @@ For continuous operation, run `uv run prexon-validator` in a separate terminal.
 The validator and API share one `.env` on the same machine. Configure targets,
 storage, chain credentials, and a qualified worker image using the
 [validator guide](docs/validator.md). [Docker deployment](docs/docker.md) runs
-both CPU services and documents the `https://prexon.ai/api/v1` routing.
+both CPU services and documents the `https://prexonai.com/api/v1` routing.
 
 ## Miner workflow
 
@@ -71,7 +71,7 @@ uv run prexon-miner submit head.tar.gz \
 
 Miner configuration uses command arguments. `--env-file .env.miner` is optional;
 the server's `.env` is not loaded automatically. The API base defaults to
-`https://prexon.ai/api/v1` and can be changed with `--api-url`. Miners need no S3
+`https://prexonai.com/api/v1` and can be changed with `--api-url`. Miners need no S3
 credentials. See [training and submission](docs/miner.md) for export, provenance,
 limits, and command options.
 

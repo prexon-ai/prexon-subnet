@@ -99,7 +99,7 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
         update={
             "role": "miner",
             "chain": "bittensor",
-            "upload_api_url": "https://prexon.ai/api/v1",
+            "upload_api_url": "https://prexonai.com/api/v1",
         }
     )
     digest = submit(

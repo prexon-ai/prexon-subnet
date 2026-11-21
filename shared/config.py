@@ -210,7 +210,7 @@ class Settings(FrozenModel):
     state_path: Path = Path("runtime/validator.sqlite3")
     artifact_root: str = "runtime/artifacts"
     upload_staging_root: str = ""
-    upload_api_url: str = "https://prexon.ai/api/v1"
+    upload_api_url: str = "https://prexonai.com/api/v1"
     uploads_enabled: bool = False
     upload_state_path: Path = Path("runtime/api/uploads.sqlite3")
     upload_policy_path: Path = Path("runtime/intake-policy/upload-policy.json")

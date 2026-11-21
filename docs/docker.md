@@ -55,9 +55,9 @@ never expose either private bucket. Include the bucket name and any configured
 prefix in the public base URL. See [Hippius access controls](https://docs.hippius.com/storage/s3/advanced).
 Compose does not create buckets or change their permissions.
 
-The API binds to host `127.0.0.1:8000` by default. Configure HTTPS on `prexon.ai` and
+The API binds to host `127.0.0.1:8000` by default. Configure HTTPS on `prexonai.com` and
 forward `/api/` to the local service while preserving the prefix. The public base
-is `https://prexon.ai/api/v1`; the OpenAPI UI is `/api/docs`. Host bind/port follow
+is `https://prexonai.com/api/v1`; the OpenAPI UI is `/api/docs`. Host bind/port follow
 `PREXON_API_HOST` and `PREXON_API_PORT`; the container listens on port 8000.
 
 ## GPU worker image
