@@ -84,7 +84,9 @@ def test_archive_member_names_must_be_plain_file_names(tmp_path, name):
 def test_deeply_nested_config_is_rejected_as_invalid(tmp_path):
     checkpoint = make_checkpoint(tmp_path / "head")
     (checkpoint / "config.json").write_bytes(b"[" * 100_000)
-    with pytest.raises(ValueError, match="nest"):
+    # Depending on the interpreter's stack, parsing stops at its recursion guard or at
+    # the end of the input; either way the file must be reported as invalid.
+    with pytest.raises(ValueError):
         validate_checkpoint(checkpoint, 1024**2)
 
 
