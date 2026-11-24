@@ -15,6 +15,7 @@ services:
       PREXON_UPLOAD_STAGING_ROOT: ${PREXON_UPLOAD_STAGING_ROOT:-}
       PREXON_UPLOAD_POLICY_PATH: /data/intake-policy/upload-policy.json
       PREXON_DATASET_CACHE: /data/datasets
+      PREXON_SSH_KNOWN_HOSTS: /data/known_hosts
     volumes:
       - ../runtime:/data
       - ../profiles:/app/profiles:ro

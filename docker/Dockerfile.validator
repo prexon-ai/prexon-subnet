@@ -18,6 +18,7 @@ ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 \
     PREXON_ARTIFACT_ROOT=/data/artifacts \
     PREXON_DASHBOARD_PATH=/data/public/dashboard.json \
     PREXON_PUBLIC_ARTIFACT_ROOT=/data/public/artifacts \
-    PREXON_UPLOAD_POLICY_PATH=/data/intake-policy/upload-policy.json
+    PREXON_UPLOAD_POLICY_PATH=/data/intake-policy/upload-policy.json \
+    PREXON_SSH_KNOWN_HOSTS=/data/known_hosts
 USER prexon
 ENTRYPOINT ["prexon-validator"]

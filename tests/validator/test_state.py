@@ -186,3 +186,106 @@ def test_queue_age_is_retained_across_restart_and_failed_session(tmp_path):
     assert session is not None
     recovered.finish_session(session["id"], 22601)
     assert recovered.claim_session(config, 22602, 21600, 10, 3600) is not None
+
+
+def _status(state, commitment):
+    row = next(r for r in state.submissions() if r["id"] == commitment.identity)
+    return row["status"], row["reason"]
+
+
+def test_head_is_set_aside_after_repeated_unusable_evaluations(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    first, second = admit(s, t, 1), admit(s, t, 2)
+    now = 21600
+    for attempt in range(3):
+        session = s.claim_session(t, now, 21600, 10, 3600)
+        j = s.create_job(session["id"], candidate_url="file:///candidate", now=now + 1)
+        assert j.commitment == first
+        unusable = Decision(outcome="inconclusive", reason="reference_drift")
+        s.complete_job(j, evidence(j), unusable, now + 2, max_attempts=3)
+        s.finish_session(session["id"], now + 3)
+        assert _status(s, first)[0] == ("ready" if attempt < 2 else "stalled")
+        now += 10
+    # Set aside is not a loss: no verdict about the head, and the queue moves on.
+    assert _status(s, first) == ("stalled", "reference_drift")
+    session = s.claim_session(t, now, 21600, 10, 3600)
+    assert s.next_submission(session["id"])["commitment"] == second
+
+
+def test_timed_out_jobs_count_toward_the_limit_but_interrupted_ones_do_not(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    head = admit(s, t, 1)
+    now = 21600
+    for _ in range(4):  # e.g. controller shutdowns: nothing was learned about the head
+        session = s.claim_session(t, now, 21600, 10, 3600)
+        s.create_job(session["id"], candidate_url="file:///candidate", now=now + 1)
+        s.finish_session(session["id"], now + 2)
+        now += 10
+    assert _status(s, head)[0] == "ready"
+    for _ in range(2):
+        session = s.claim_session(t, now, 21600, 10, 3600)
+        j = s.create_job(session["id"], candidate_url="file:///candidate", now=now + 1)
+        s.timeout_job(j, max_attempts=2)
+        s.finish_session(session["id"], now + 3)
+        now += 10
+    assert _status(s, head) == ("stalled", "evaluation_timeout")
+
+
+def test_sessions_without_a_verdict_delay_the_next_rental_with_backoff(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    admit(s, t, 1)
+    admit(s, t, 2)
+
+    def claim(now):
+        return s.claim_session(t, now, 21600, 10, 3600, retry_seconds=300)
+
+    first = claim(21600)
+    s.set_pod(first["id"], "pod-1")
+    s.finish_session(first["id"], 21700)  # e.g. the pod failed before any job finished
+    assert claim(21999) is None
+    second = claim(22000)
+    s.set_pod(second["id"], "pod-2")
+    s.finish_session(second["id"], 22000)
+    assert claim(22599) is None  # the wait doubles while sessions keep failing
+    third = claim(22600)
+    j = s.create_job(third["id"], candidate_url="file:///candidate", now=22601)
+    s.complete_job(j, evidence(j), Decision(outcome="lost", reason="insufficient"), 22602)
+    s.finish_session(third["id"], 22603)
+    assert claim(22604) is not None  # a session that reached a verdict clears the delay
+
+
+def test_requeued_heads_get_a_fresh_set_of_attempts(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    head = admit(s, t, 1)
+    unusable = Decision(outcome="inconclusive", reason="hardware_or_runtime_mismatch")
+
+    def fail_once(now):
+        session = s.claim_session(t, now, 21600, 10, 3600)
+        j = s.create_job(session["id"], candidate_url="file:///candidate", now=now + 1)
+        s.complete_job(j, evidence(j), unusable, now + 2, max_attempts=2)
+        s.finish_session(session["id"], now + 3)
+
+    fail_once(21600)
+    fail_once(21610)
+    assert _status(s, head)[0] == "stalled"
+    assert s.requeue_stalled() == 1
+    assert _status(s, head) == ("ready", None)
+    fail_once(21620)
+    assert _status(s, head)[0] == "ready"
+
+
+def test_sessions_that_never_rented_retry_at_the_first_wait(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    admit(s, t, 1)
+    now = 21600
+    for _ in range(4):  # e.g. the provider had no matching GPU: nothing was paid for
+        session = s.claim_session(t, now, 21600, 10, 3600, retry_seconds=300)
+        assert session is not None
+        s.finish_session(session["id"], now)
+        assert s.claim_session(t, now + 299, 21600, 10, 3600, retry_seconds=300) is None
+        now += 300

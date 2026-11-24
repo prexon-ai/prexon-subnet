@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from collections.abc import Container
 from pathlib import Path
 from typing import Any, Protocol
 
 from shared.chain import connect, require_success, wallet
 from shared.config import FrozenModel, Settings
 from shared.contracts import Commitment
+
+log = logging.getLogger(__name__)
 
 
 class ChainSnapshot(FrozenModel):
@@ -21,7 +25,7 @@ class ChainSnapshot(FrozenModel):
 
 
 class Chain(Protocol):
-    def scan(self, start_block: int | None = None) -> ChainSnapshot: ...
+    def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot: ...
     def publish(self, weights: dict[int, float]) -> None: ...
     def current_owners(self) -> dict[int, str]: ...
     def block_hash(self, block: int) -> str: ...
@@ -34,7 +38,12 @@ class BittensorChain:
         self.client = client if client is not None else connect(settings)
         self.signer = signer
 
-    def scan(self, start_block: int | None = None) -> ChainSnapshot:
+    def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot:
+        """Read finalized reveals; `known` holds commitment identities already discovered.
+
+        Reveals stay in chain storage long after non-archive nodes discard the state of
+        their blocks, so block times are read only for reveals that are new.
+        """
         finalized = self.finalized_height()
         # Replay snapshots after downtime to avoid skipping the bounded on-chain reveal history.
         end = finalized if start_block is None else min(finalized, start_block + 120)
@@ -43,7 +52,7 @@ class BittensorChain:
         owners = {int(n.uid): str(n.hotkey) for n in meta.neurons}
         by_hotkey = {hotkey: uid for uid, hotkey in owners.items()}
         found: dict[str, Commitment] = {}
-        timestamps: dict[int, float] = {}
+        timestamps: dict[int, float | None] = {}
         for block in blocks:
             records = self.client.get_all_revealed_commitments(self.settings.netuid, block=block)
             for hotkey, entries in records.items():
@@ -54,21 +63,27 @@ class BittensorChain:
                     if not match or reveal_block > end:
                         continue
                     revealed_at = int(reveal_block)
-                    if revealed_at not in timestamps:
-                        timestamps[revealed_at] = self.client.get_timestamp(revealed_at).timestamp()
                     commitment = Commitment(
                         netuid=self.settings.netuid,
-                        block=int(reveal_block),
-                        block_hash=self.client.get_block_hash(int(reveal_block)),
+                        block=revealed_at,
+                        block_hash=self.client.get_block_hash(revealed_at),
                         # Storage does not expose extrinsic positions. Same-block ties are hotkey
                         # then artifact order; position must not depend on a sliding history window.
                         extrinsic_index=0,
                         uid=by_hotkey[hotkey],
                         hotkey=hotkey,
                         artifact=match.group(1),
-                        submitted_at=timestamps[revealed_at],
                     )
-                    found[commitment.identity] = commitment
+                    identity = commitment.identity
+                    if identity in found:
+                        continue
+                    if identity not in known:
+                        if revealed_at not in timestamps:
+                            timestamps[revealed_at] = self._block_time(revealed_at)
+                        commitment = commitment.model_copy(
+                            update={"submitted_at": timestamps[revealed_at]}
+                        )
+                    found[identity] = commitment
         return ChainSnapshot(
             block=end,
             finalized_block=finalized,
@@ -77,6 +92,16 @@ class BittensorChain:
                 sorted(found.values(), key=lambda c: (c.block, c.hotkey, c.artifact))
             ),
         )
+
+    def _block_time(self, block: int) -> float | None:
+        """Chain time of a block, or None once the node no longer holds that block's state."""
+        try:
+            seconds = float(self.client.get_timestamp(block).timestamp())
+        except Exception as exc:
+            log.warning("reveal_time_unavailable block=%s error=%s", block, type(exc).__name__)
+            return None
+        # Some nodes answer for discarded state with an empty value instead of an error.
+        return seconds if seconds > 0 else None
 
     def publish(self, weights: dict[int, float]) -> None:
         if self.signer is None:
@@ -113,8 +138,8 @@ class FileChain:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def scan(self, start_block: int | None = None) -> ChainSnapshot:
-        del start_block
+    def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot:
+        del start_block, known
         return ChainSnapshot.model_validate_json(self.path.read_bytes())
 
     def publish(self, weights: dict[int, float]) -> None:

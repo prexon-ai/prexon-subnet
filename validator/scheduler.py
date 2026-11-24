@@ -19,6 +19,7 @@ def claim_due_sessions(
             settings.schedule_seconds,
             settings.early_queue_depth,
             settings.session_seconds,
+            retry_seconds=settings.session_retry_seconds,
         )
         if session:
             claimed.append(session)

@@ -31,6 +31,11 @@ def main() -> None:
     parser.add_argument(
         "--check-config", action="store_true", help="Validate configuration without external calls"
     )
+    parser.add_argument(
+        "--requeue-stalled",
+        action="store_true",
+        help="Return submissions set aside after repeated failed evaluations to the queue",
+    )
     args = parser.parse_args()
     settings = load_settings("validator", args.env_file)
     if args.qualification_profile:
@@ -76,6 +81,9 @@ def main() -> None:
         publications: PublicationService | None = None
         controller: Controller | None = None
         try:
+            if args.requeue_stalled:
+                print(f"Requeued {state.requeue_stalled()} stalled submission(s)")
+                return
             has_chain = bool(settings.targets or state.metadata("chain_context"))
             if has_chain and settings.chain == "bittensor" and settings.netuid == 0:
                 raise ValueError("Set PREXON_NETUID for the subnet before enabling models")

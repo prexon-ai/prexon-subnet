@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS similarity_verdicts (
 """
 
 
+# Longest wait between rentals while a target's sessions keep ending without a verdict.
+_MAX_RETRY_SECONDS = 3600.0
+
+
 def target_key(target: TargetConfig) -> str:
     return f"{target.model_id}@{target.revision}"
 
@@ -197,6 +201,9 @@ class State:
                     (commitment.identity, commitment.model_dump_json(), observed),
                 )
             self.set_metadata("finalized_block", str(finalized_block))
+
+    def known_commitments(self) -> set[str]:
+        return {row[0] for row in self.connection.execute("SELECT id FROM discoveries")}
 
     def pending_admissions(self, limit: int = 100) -> list[Commitment]:
         if not 1 <= limit <= 100:
@@ -410,6 +417,28 @@ class State:
             ).fetchone()[0]
         )
 
+    def _retry_time(self, target: TargetConfig, retry_seconds: float) -> float:
+        """Earliest next rental after the target's latest sessions ended without a verdict."""
+        rows = self.connection.execute(
+            "SELECT COALESCE(s.finished_at,0) AS finished_at,s.pod_id IS NOT NULL AS rented,"
+            "EXISTS(SELECT 1 FROM jobs j WHERE j.session_id=s.id "
+            "AND j.status IN ('won','lost')) AS decided "
+            "FROM sessions s WHERE s.target_key=? AND s.state='finished' "
+            "ORDER BY s.finished_at DESC,s.rowid DESC LIMIT 16",
+            (target_key(target),),
+        ).fetchall()
+        undecided = rentals = 0
+        for row in rows:
+            if row["decided"]:
+                break
+            undecided += 1
+            rentals += bool(row["rented"])
+        if not undecided:
+            return 0.0
+        # Only rentals that produced nothing lengthen the wait; a refused rental cost nothing.
+        wait = min(max(retry_seconds, _MAX_RETRY_SECONDS), retry_seconds * 2 ** max(rentals - 1, 0))
+        return float(rows[0]["finished_at"]) + wait
+
     def claim_session(
         self,
         target: TargetConfig,
@@ -417,6 +446,8 @@ class State:
         schedule_seconds: float,
         early_depth: int,
         session_seconds: int,
+        *,
+        retry_seconds: float = 0,
     ) -> dict[str, Any] | None:
         with self.transaction() as conn:
             self.register_target(target)
@@ -424,6 +455,8 @@ class State:
                 "SELECT 1 FROM sessions WHERE target_key=? AND state!='finished'",
                 (target_key(target),),
             ).fetchone():
+                return None
+            if retry_seconds > 0 and now < self._retry_time(target, retry_seconds):
                 return None
             oldest = self._oldest_ready(target)
             if oldest is None or oldest["profile_id"] != target.identity:
@@ -646,19 +679,59 @@ class State:
             )
             return job
 
+    def _status_after_failed_attempt(self, submission_id: str, max_attempts: int | None) -> str:
+        """Set a head aside once its evaluations keep ending without a verdict."""
+        if max_attempts is None:
+            return "ready"
+        failed = self.connection.execute(
+            "SELECT count(*) FROM jobs WHERE submission_id=? "
+            "AND status IN ('inconclusive','timed_out')",
+            (submission_id,),
+        ).fetchone()[0]
+        return "stalled" if int(failed) >= max_attempts else "ready"
+
+    def timeout_job(self, job: EvaluationJob, *, max_attempts: int | None = None) -> str | None:
+        """Record a job that used its whole time budget without reporting a result."""
+        with self.transaction() as conn:
+            stored = conn.execute("SELECT status FROM jobs WHERE id=?", (job.job_id,)).fetchone()
+            if stored is None or stored["status"] != "running":
+                return None
+            conn.execute("UPDATE jobs SET status='timed_out' WHERE id=?", (job.job_id,))
+            status = self._status_after_failed_attempt(job.commitment.identity, max_attempts)
+            conn.execute(
+                "UPDATE submissions SET status=?,reason='evaluation_timeout' WHERE id=?",
+                (status, job.commitment.identity),
+            )
+            return status
+
+    def requeue_stalled(self) -> int:
+        """Operator action: give every set-aside head a fresh set of attempts."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='retired' WHERE status IN ('inconclusive','timed_out') "
+                "AND submission_id IN (SELECT id FROM submissions WHERE status='stalled')"
+            )
+            return int(
+                conn.execute(
+                    "UPDATE submissions SET status='ready',reason=NULL WHERE status='stalled'"
+                ).rowcount
+            )
+
     def complete_job(
         self,
         job: EvaluationJob,
         result: EvaluationResult,
         decision: Decision,
         now: float,
-    ) -> None:
+        *,
+        max_attempts: int | None = None,
+    ) -> str | None:
         with self.transaction() as conn:
             stored = conn.execute("SELECT * FROM jobs WHERE id=?", (job.job_id,)).fetchone()
             if stored is None or EvaluationJob.model_validate_json(stored["job"]) != job:
                 raise ValueError("Unknown or stale job")
             if stored["status"] != "running":
-                return
+                return None
             if self.incumbent(job.target) != job.incumbent_artifact:
                 raise ValueError("Job incumbent is stale")
             if (
@@ -672,7 +745,6 @@ class State:
                 now > job.deadline or self.session(job.session_id)["state"] != "active"
             ):
                 raise ValueError("Cannot promote an expired or stopped job")
-            status = "ready" if decision.outcome == "inconclusive" else decision.outcome
             conn.execute(
                 "UPDATE jobs SET status=?,result=?,decision=? WHERE id=?",
                 (
@@ -681,6 +753,11 @@ class State:
                     decision.model_dump_json(),
                     job.job_id,
                 ),
+            )
+            status = (
+                self._status_after_failed_attempt(job.commitment.identity, max_attempts)
+                if decision.outcome == "inconclusive"
+                else decision.outcome
             )
             conn.execute(
                 "UPDATE submissions SET status=?,reason=?,score=? WHERE id=?",
@@ -705,6 +782,7 @@ class State:
                     "SET submission_id=excluded.submission_id,artifact=excluded.artifact",
                     (target_key(job.target), award.submission_id, award.artifact),
                 )
+            return status
 
     def awards(self, targets: tuple[TargetConfig, ...] | None = None) -> list[Award]:
         rows = self.connection.execute(

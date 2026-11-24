@@ -45,7 +45,10 @@ Public views contain released winners and anonymous queue counts.
 Each of the two optional target slots has its own queue, GPU requirements,
 incumbent, and emission allocation. A session starts at 10 ready submissions or
 six hours after the oldest unevaluated ready commitment. Original chain/discovery
-age survives retries. One durable session claim per target prevents overlapping
+age survives retries. A submission whose evaluations repeatedly end without a
+verdict is set aside instead of blocking the queue, and sessions that reach no
+verdict are retried with a growing wait. One durable session claim per target
+prevents overlapping
 rentals; different targets may run concurrently.
 
 Profiles and dataset plans are immutable per job. Dataset membership freezes

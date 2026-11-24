@@ -57,7 +57,8 @@ Correctness, complete output budgets, hardware/runtime matching, bounded referen
 drift, configured p95 latency SLOs, and required-cell regression checks are gates.
 Candidate output IDs must match the reference greedy output IDs. Public, incumbent,
 or target-reference inconsistencies make evidence inconclusive. Infrastructure
-failures/missing evidence do not become fabricated miner losses. The cell regression
+failures/missing evidence do not become fabricated miner losses; a submission whose
+evaluations keep ending without a verdict is set aside as stalled. The cell regression
 check compares each candidate workload's geometric throughput against the strongest
 reference on that workload. All scheduled measurements are retained.
 

@@ -49,7 +49,10 @@ def strict_json(data: str | bytes) -> Any:
             result[key] = value
         return result
 
-    return json.loads(data, object_pairs_hook=unique)
+    try:
+        return json.loads(data, object_pairs_hook=unique)
+    except RecursionError:
+        raise ValueError("JSON nesting is too deep") from None
 
 
 def _finite_values(path: Path, start: int, length: int, dtype: str) -> None:
@@ -103,7 +106,11 @@ def _tensor_keys(path: Path) -> dict[str, TensorSpec]:
             if not isinstance(tensor, dict):
                 raise ValueError("Invalid tensor metadata")
             continue
-        if not isinstance(tensor, dict) or tensor.get("dtype") not in _DTYPE_BYTES:
+        if (
+            not isinstance(tensor, dict)
+            or not isinstance(tensor.get("dtype"), str)
+            or tensor["dtype"] not in _DTYPE_BYTES
+        ):
             raise ValueError("Unsupported tensor dtype")
         shape = tensor.get("shape")
         offsets = tensor.get("data_offsets")

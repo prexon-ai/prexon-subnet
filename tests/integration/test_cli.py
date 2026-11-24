@@ -79,7 +79,7 @@ def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(tmp_p
     published = []
 
     class Boundary:
-        def scan(self, start_block=None):
+        def scan(self, start_block=None, known=()):
             return ChainSnapshot(block=100, commitments=(), owners={0: "burn"})
 
         def current_owners(self):
@@ -100,3 +100,33 @@ def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(tmp_p
     monkeypatch.setattr(sys, "argv", ["prexon-validator", "--once"])
     main()
     assert published == [{0: 1.0}]
+
+
+def test_requeue_command_returns_set_aside_heads_to_the_queue(tmp_path):
+    from shared.contracts import Decision
+    from tests.factories import evidence
+    from tests.validator.test_state import admit
+    from validator.state import State
+
+    state_path = tmp_path / "state.sqlite"
+    state = State(state_path)
+    t = target()
+    head = admit(state, t, 1)
+    session = state.claim_session(t, 21600, 21600, 10, 3600)
+    j = state.create_job(session["id"], candidate_url="file:///candidate", now=21601)
+    unusable = Decision(outcome="inconclusive", reason="reference_drift")
+    state.complete_job(j, evidence(j), unusable, 21602, max_attempts=1)
+    state.finish_session(session["id"], 21603)
+    state.close()
+    env = tmp_path / ".env"
+    env.write_text(f"PREXON_STATE_PATH={state_path}\nPREXON_MODEL_1_ID=\nPREXON_MODEL_2_ID=\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "validator.main", "--env-file", str(env), "--requeue-stalled"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.stdout.strip() == "Requeued 1 stalled submission(s)"
+    row = next(r for r in State(state_path).submissions() if r["id"] == head.identity)
+    assert row["status"] == "ready"

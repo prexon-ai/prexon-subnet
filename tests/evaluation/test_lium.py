@@ -521,3 +521,43 @@ def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
         )
         assert "rent" not in calls
         assert calls[-1] == "delete"
+
+
+def test_refused_rental_leaves_nothing_to_clean_up(rental, monkeypatch):
+    from shared.lium import RentalRefused
+
+    lium, settings, config, head, output, calls, provider, _ = rental
+
+    def refuse(self, session, request):
+        calls.append("rent")
+        raise RentalRefused(409, "no_executor_matches_spec")
+
+    monkeypatch.setattr(provider, "rent", refuse)
+    monkeypatch.setattr(provider, "recover", lambda *args: None)
+    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    assert report.assessment == "inconclusive"
+    # The provider rented nothing, so no rental can be left running or pending.
+    assert report.rental_cleanup == "not_applicable"
+    assert calls == ["rent"]
+
+
+@pytest.mark.parametrize("status", ["CREATION_FAILED", "BROKEN", "REBOOT_FAILED"])
+def test_pod_that_can_no_longer_run_ends_the_rental_without_waiting(rental, monkeypatch, status):
+    lium, settings, config, head, output, calls, provider, _ = rental
+
+    class Clock:
+        now = 1_000_000.0
+
+        def time(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+    monkeypatch.setattr(lium, "time", clock)
+    monkeypatch.setattr(provider, "status", lambda *args: {"status": status})
+    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    assert report.assessment == "inconclusive"
+    assert calls == ["rent", "delete"]
+    assert clock.now - 1_000_000.0 < 30

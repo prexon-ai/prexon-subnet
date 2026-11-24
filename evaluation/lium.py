@@ -24,7 +24,7 @@ from shared.checkpoints import validate_checkpoint
 from shared.config import Settings, TargetConfig
 from shared.contracts import Decision, FileDigest
 from shared.datasets import RoundPlan
-from shared.lium import LiumClient
+from shared.lium import FAILED_POD_STATUSES, LiumClient, RentalRefused
 from shared.ssh import SshTransport
 
 PYTHON = "/opt/prexon/.venv/bin/python"
@@ -328,7 +328,7 @@ def evaluate_on_lium(
                 next_poll = now + 10
                 pod = provider.status(state["pod_id"])
                 status = str(pod.get("status", "")).lower()
-                if status in {"deleted", "terminated", "failed", "stopped", "error"}:
+                if status in FAILED_POD_STATUSES:
                     raise RuntimeError("Evaluation pod stopped")
                 for field in ("price", "pending_price"):
                     price = pod.get(field)
@@ -383,7 +383,13 @@ def evaluate_on_lium(
                     else:
                         state["rent_attempted"] = True
                         write_json(state_path, state)
-                        state["pod_id"] = provider.rent(state["id"], state["request"])
+                        try:
+                            state["pod_id"] = provider.rent(state["id"], state["request"])
+                        except RentalRefused:
+                            # A definite refusal rented nothing; no cleanup can be pending.
+                            state["rent_attempted"] = False
+                            write_json(state_path, state)
+                            raise
                     write_json(state_path, state)
                 next_poll = 0
                 while True:

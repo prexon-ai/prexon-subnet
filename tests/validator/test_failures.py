@@ -53,6 +53,8 @@ def test_failed_pod_deletion_retains_session_authority(tmp_path):
     assert len(provider.rents) == 1
     provider.delete = deleted
     controller.tick(40001)
+    assert not state.active_sessions()
+    controller.tick(40001 + controller.settings.session_retry_seconds)
     assert len(state.active_sessions()) == 1
     assert state.active_sessions()[0]["id"] != stopping_id
     assert len(provider.rents) == 2
@@ -219,3 +221,34 @@ def test_pending_profile_keeps_frozen_workloads_after_config_change(tmp_path):
     restarted.tick(21600)
     assert provider.jobs[0].target.context_length == 8192
     assert provider.jobs[0].target.identity == t.identity
+
+
+def test_refused_rental_frees_the_target_and_retries_under_a_new_identity(tmp_path):
+    from shared.lium import RentalRefused
+
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    attempts = []
+    rent = provider.rent
+
+    def scarce(session_id, request):
+        attempts.append(session_id)
+        if len(attempts) < 3:
+            raise RentalRefused(409, "no_executor_matches_spec")
+        return rent(session_id, request)
+
+    provider.rent = scarce
+    for now in (21600, 21901, 22502):
+        controller.tick(now)
+        assert all(s["state"] == "active" for s in state.active_sessions())
+    # The provider replays a refusal for a repeated identity; each attempt needs its own.
+    assert len(set(attempts)) == 3
+    assert len(provider.rents) == len(provider.jobs) == 1
+
+
+@pytest.mark.parametrize("status", ["CREATION_FAILED", "BROKEN", "REBOOT_FAILED", "DELETING"])
+def test_pod_that_can_no_longer_run_is_released_at_once(tmp_path, status):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    provider.status = lambda _: {"status": status, "spend_to_date": 0}
+    controller.tick(21600)
+    assert provider.deleted == ["pod-" + provider.rents[0]]
+    assert not state.active_sessions()

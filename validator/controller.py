@@ -15,6 +15,7 @@ from shared.artifacts import ArtifactStore
 from shared.config import Settings, TargetConfig, read_environment
 from shared.contracts import EvaluationResult, Qualification
 from shared.datasets import RoundContext, RoundPlan
+from shared.lium import FAILED_POD_STATUSES, RentalRefused
 from shared.uploads import UploadPolicy, UploadTarget
 from validator.chain import Chain, ChainSnapshot
 from validator.competition import emission_weights, score_evidence
@@ -79,7 +80,9 @@ class Controller:
         if self.settings.targets or self.state.metadata("chain_initialized"):
             try:
                 cursor = self.state.metadata("finalized_block")
-                self.snapshot = self.chain.scan(int(cursor) if cursor else None)
+                self.snapshot = self.chain.scan(
+                    int(cursor) if cursor else None, self.state.known_commitments()
+                )
                 self.state.discover(self.snapshot.commitments, self.snapshot.block, now)
                 self.state.set_metadata("chain_initialized", "1")
                 scan_ok = True
@@ -284,7 +287,16 @@ class Controller:
             self.state.set_request(session["id"], request)
             session = self.state.session(session["id"])
         if session["pod_id"] is None:
-            pod_id = self.provider.rent(session["id"], json.loads(session["request"]))
+            try:
+                pod_id = self.provider.rent(session["id"], json.loads(session["request"]))
+            except RentalRefused as exc:
+                # Nothing was rented, so there is no pod to keep ownership of. The provider
+                # replays a refusal for this identity; a later session retries with a new one.
+                log.warning(
+                    "rental_refused session=%s reason=%s", session["id"], exc.code or exc.status
+                )
+                self.state.finish_session(session["id"], now)
+                return
             self.state.set_pod(session["id"], pod_id)
             session = self.state.session(session["id"])
         pod = self.provider.status(session["pod_id"])
@@ -306,7 +318,7 @@ class Controller:
             self.stop_session(session, now)
             return
         status = str(pod.get("status", "")).lower()
-        if status in {"deleted", "terminated", "failed", "stopped"}:
+        if status in FAILED_POD_STATUSES:
             self.stop_session(session, now)
             return
         if status not in {"running", "ready", "active"}:
@@ -315,6 +327,12 @@ class Controller:
         if job is not None:
             result_key = f"jobs/{job.job_id}/result.json"
             if now >= job.deadline:
+                # The whole job budget passed without a result: one failed attempt.
+                outcome = self.state.timeout_job(
+                    job, max_attempts=self.settings.max_evaluation_attempts
+                )
+                if outcome == "stalled":
+                    log.warning("submission_stalled submission=%s", job.commitment.identity)
                 self.stop_session(session, now)
                 return
             if self.store.exists(result_key):
@@ -323,7 +341,15 @@ class Controller:
                 self.store.write_bytes(
                     f"reports/{job.job_id}.json", result.model_dump_json().encode()
                 )
-                self.state.complete_job(job, result, decision, now)
+                outcome = self.state.complete_job(
+                    job,
+                    result,
+                    decision,
+                    now,
+                    max_attempts=self.settings.max_evaluation_attempts,
+                )
+                if outcome == "stalled":
+                    log.warning("submission_stalled submission=%s", job.commitment.identity)
                 if decision.outcome == "inconclusive":
                     self.stop_session(session, now)
                 return

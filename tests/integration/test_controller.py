@@ -1,11 +1,18 @@
+import gzip
+import hashlib
+import io
 import json
+import struct
+import tarfile
+
+import pytest
 
 from shared.artifacts import ArtifactStore, package_checkpoint
 from shared.checkpoints import checkpoint_schema
 from shared.config import Settings
-from shared.contracts import Commitment, Qualification
-from tests.factories import evidence, make_checkpoint, provenance, target
-from validator.chain import ChainSnapshot
+from shared.contracts import Commitment, Qualification, SubmissionManifest
+from tests.factories import PrunedChainNode, evidence, make_checkpoint, provenance, target
+from validator.chain import BittensorChain, ChainSnapshot
 from validator.controller import Controller
 from validator.state import State
 
@@ -17,7 +24,7 @@ class TestChain:
         self.commitments = tuple(commitments)
         self.published = []
 
-    def scan(self, start_block=None):
+    def scan(self, start_block=None, known=()):
         return ChainSnapshot(
             block=100, owners={1: "miner", 0: "burn"}, commitments=self.commitments
         )
@@ -127,8 +134,13 @@ def test_chain_to_winner_and_recovery_is_idempotent(tmp_path):
 def test_expired_session_deletes_pod_and_keeps_unfinished_queue(tmp_path):
     controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
     controller.tick(21600)
-    controller.tick(21600 + controller.settings.session_seconds + 1)
+    expired = 21600 + controller.settings.session_seconds + 1
+    controller.tick(expired)
     assert len(provider.deleted) == 1
+    # A session that reached no verdict is not followed by another rental at once.
+    assert len(provider.rents) == 1
+    assert state.ready_count(t.identity) == 1
+    controller.tick(expired + controller.settings.session_retry_seconds)
     # Its original six-hour deadline remains due after an infrastructure retry.
     assert state.ready_count(t.identity) == 0
     assert len(provider.rents) == 2
@@ -160,3 +172,103 @@ def test_incompatible_checkpoint_is_terminally_rejected_before_gpu_rental(tmp_pa
     assert provider.rents == []
     assert state.ready_count(target.identity) == 0
     assert state.pending_admissions() == []
+
+
+def _raw_package(path, target, files, extra=()):
+    """Archive arbitrary bytes under a manifest that matches them exactly."""
+    manifest = SubmissionManifest(
+        target_id=target.model_id,
+        target_revision=target.revision,
+        competition_id=target.identity,
+        files=[
+            {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+            for name, data in sorted(files)
+        ],
+        provenance=provenance(),
+    )
+    members = [("manifest.json", manifest.model_dump_json().encode()), *extra, *files]
+    with path.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w|", format=tarfile.USTAR_FORMAT) as archive:
+            for name, data in members:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+
+
+@pytest.mark.parametrize("defect", ["nested_config", "aliased_member", "unhashable_dtype"])
+def test_malformed_package_is_terminally_rejected_instead_of_retried(tmp_path, defect):
+    controller, state, store, chain, provider, target = setup_pipeline(tmp_path)
+    config = (tmp_path / "head/config.json").read_bytes()
+    weights = (tmp_path / "head/model.safetensors").read_bytes()
+    extra = ()
+    if defect == "nested_config":
+        config = b"[" * 100_000
+    elif defect == "aliased_member":
+        extra = (("config.json/", config),)
+    else:
+        header = json.dumps(
+            {"weight": {"dtype": ["F32"], "shape": [2], "data_offsets": [0, 8]}}
+        ).encode()
+        weights = struct.pack("<Q", len(header)) + header + b"\0" * 8
+    package = tmp_path / "malformed.tar.gz"
+    _raw_package(package, target, [("config.json", config), ("model.safetensors", weights)], extra)
+    digest = store.put_file(package)
+    c = Commitment(netuid=1, block=99, block_hash="hash", hotkey="miner", uid=1, artifact=digest)
+    chain.commitments = (c,)
+    controller.tick(21600)
+    # A package that can never be valid must not be downloaded again on every round.
+    assert state.pending_admissions() == []
+    assert provider.rents == []
+
+
+def test_scanning_and_weights_continue_after_a_reveal_outlives_node_history(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    digest = chain.commitments[0].artifact
+    node = PrunedChainNode(head=100, reveals={"miner": ((99, f"px1:{digest}"),)})
+    live = Controller(
+        controller.settings,
+        state,
+        store,
+        BittensorChain(controller.settings, client=node, signer=object()),
+        provider,
+    )
+    live.tick(1000)
+    assert state.ready_count(t.identity) == 1
+    for head, now in ((140, 2000), (180, 3000)):  # Block 99 leaves the node's 50-block history.
+        node.head = head
+        live.tick(now)
+    assert state.metadata("finalized_block") == "180"
+    assert len(node.weights) == 3
+
+
+def test_unusable_evaluations_stop_after_the_attempt_limit(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    now = 21600.0
+    for _ in range(40):  # every evaluation of this head comes back unusable
+        controller.tick(now)
+        running = state.active_sessions() and state.running_job(state.active_sessions()[0]["id"])
+        if running:
+            unusable = evidence(running).model_copy(
+                update={"status": "inconclusive", "error_code": "RuntimeError"}
+            )
+            store.write_bytes(
+                f"jobs/{running.job_id}/result.json", unusable.model_dump_json().encode()
+            )
+        now += 120
+    assert len(provider.rents) == controller.settings.max_evaluation_attempts == 3
+    assert len(provider.deleted) == 3
+    assert state.submissions()[0]["status"] == "stalled"
+    assert not state.active_sessions()
+    assert state.awards() == []
+
+
+def test_job_that_never_reports_is_given_up_after_the_attempt_limit(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    now = 21600.0
+    while now < 21600 + 24 * 3600:  # the worker never writes a result
+        controller.tick(now)
+        now += 60
+    assert len(provider.rents) == 3
+    row = state.submissions()[0]
+    assert (row["status"], row["reason"]) == ("stalled", "evaluation_timeout")
+    assert not state.active_sessions()

@@ -87,6 +87,8 @@ def extract_package(
                 not member.isfile()
                 or path.is_absolute()
                 or len(path.parts) != 1
+                # "config.json/" or "./config.json" would alias another member's file.
+                or "/" in member.name
                 or member.name in {".", ".."}
                 or "\\" in member.name
                 or member.name in seen

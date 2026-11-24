@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from shared.config import Settings
-from tests.factories import target
+from tests.factories import PrunedChainNode, target
 from validator.chain import BittensorChain
 from validator.providers.lium import LiumProvider
 
@@ -48,6 +48,30 @@ def test_chain_reads_finalized_snapshot_and_excludes_future():
     assert boundary.queries == [100, 100]
 
 
+def test_chain_scan_does_not_reread_the_time_of_reveals_it_already_knows():
+    # Reveals stay in chain storage indefinitely; their block state does not.
+    node = PrunedChainNode(head=100, reveals={"miner": ((99, "px1:" + "c" * 64),)})
+    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    first = chain.scan()
+    assert first.commitments[0].submitted_at == 1_800_000_000 + 99 * 12
+    node.head, node.timestamp_queries = 190, []
+    later = chain.scan(189, known={first.commitments[0].identity})
+    assert [c.identity for c in later.commitments] == [first.commitments[0].identity]
+    assert node.timestamp_queries == []
+
+
+@pytest.mark.parametrize("failure", ["discarded", "zero"])
+def test_chain_scan_keeps_a_new_reveal_whose_block_time_is_unavailable(failure):
+    node = PrunedChainNode(head=190, reveals={"miner": ((99, "px1:" + "c" * 64),)})
+    if failure == "zero":  # Some public nodes answer for discarded state with an empty value.
+        node.get_timestamp = lambda block: datetime.fromtimestamp(0, UTC)
+    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    snapshot = chain.scan()
+    # Admission falls back to the first-discovery time when chain time is absent.
+    assert [c.artifact for c in snapshot.commitments] == ["c" * 64]
+    assert snapshot.commitments[0].submitted_at is None
+
+
 def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path):
     key = tmp_path / "id.pub"
     key.write_text("ssh-ed25519 public")
@@ -81,6 +105,29 @@ def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path):
     assert provider.rent(session["id"], request) == "pod"
     assert requests[-1].content == requests[-2].content
     provider.delete("pod")
+
+
+@pytest.mark.parametrize(
+    "status,body,refused",
+    [
+        (409, {"success": False, "code": "no_executor_matches_spec"}, True),
+        (402, {"detail": "Insufficient balance"}, True),
+        # The provider may still hold or be creating a pod for this identity.
+        (409, {"detail": {"code": "idempotency_in_progress"}}, False),
+        (409, {"detail": {"code": "idempotency_outcome_unknown"}}, False),
+        (503, {"detail": "unavailable"}, False),
+    ],
+)
+def test_lium_separates_a_definite_refusal_from_an_unknown_rental_outcome(status, body, refused):
+    from shared.lium import RentalRefused
+
+    client = httpx.Client(
+        base_url="https://lium.io/api",
+        transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
+    )
+    provider = LiumProvider(Settings(role="validator"), "key", client=client)
+    with pytest.raises(RentalRefused if refused else httpx.HTTPStatusError):
+        provider.rent("a" * 32, {"pod_name": "prexon-" + "a" * 32})
 
 
 def test_lium_rejects_template_image_mismatch(tmp_path):

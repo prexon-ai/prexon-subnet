@@ -3,11 +3,39 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 import httpx
 
 from shared.config import Settings, TargetConfig
+
+# Pod states that cannot become a usable pod again (lower-cased Lium PodStatus values).
+FAILED_POD_STATUSES = frozenset(
+    {
+        "deleted",
+        "terminated",
+        "failed",
+        "stopped",
+        "error",
+        "creation_failed",
+        "broken",
+        "reboot_failed",
+        "deleting",
+    }
+)
+
+
+class RentalRefused(RuntimeError):
+    """The provider answered a rent request with a definite refusal: nothing was rented.
+
+    Lium replays a refusal for a repeated Idempotency-Key and body, so a later attempt
+    needs a new rental identity. Unknown outcomes are reported as ordinary errors.
+    """
+
+    def __init__(self, status: int, code: str = "") -> None:
+        super().__init__(f"Lium refused the rental (HTTP {status}{', ' + code if code else ''})")
+        self.status, self.code = status, code
 
 
 class LiumClient:
@@ -74,6 +102,18 @@ class LiumClient:
             json=request,
             headers={"Idempotency-Key": f"prexon-{session_id}"},
         )
+        # Idempotency conflicts mean an earlier call may still own or be creating a pod.
+        if (
+            400 <= response.status_code < 500
+            and response.status_code != 408
+            and "idempotency" not in response.text.lower()
+        ):
+            try:
+                code = response.json().get("code")
+            except (ValueError, AttributeError):
+                code = None
+            known = isinstance(code, str) and re.fullmatch(r"[a-z0-9_]{1,64}", code)
+            raise RentalRefused(response.status_code, code if known else "")
         response.raise_for_status()
         data = response.json()
         if data.get("success") is not True or not data.get("pod_id"):

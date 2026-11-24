@@ -86,7 +86,9 @@ background admission/publication workers; the controller alone finalizes SQLite.
 Initial chain discovery reads available finalized reveal history. Subsequent
 scans replay up to 120 blocks per tick after the durable cursor. Archive access
 is needed after long downtime; pruned reveals cannot be reconstructed from a fresh
-state file. Same-block ties use hotkey then commitment ID.
+state file. Same-block ties use hotkey then commitment ID. A reveal's block time is
+read once, when it is first discovered, so reveals that outlive a non-archive
+node's history do not interrupt scanning.
 
 The validator publishes a fresh private upload policy after checking ownership
 and qualifications. The API rejects stale/missing policies. Incoming packages
@@ -108,6 +110,20 @@ commitment. Chain time is used when available; first discovery is the fallback.
 Retries and restarts preserve age. Session cost/duration bounds are independent
 of this trigger.
 
+An evaluation that ends without a verdict counts as a failed attempt: an unusable
+result, or a job that used its whole time budget without reporting. After
+`PREXON_MAX_EVALUATION_ATTEMPTS=3` failed attempts the submission is set aside as
+`stalled`. That is not a loss; the submission simply stops holding up the queue.
+Jobs cut short by a session ending, a pod failure, or a controller shutdown do not
+count. After fixing an infrastructure problem, stop the controller and run
+`uv run prexon-validator --requeue-stalled` to give stalled submissions a fresh
+set of attempts.
+
+When a session ends without any verdict, the next rental for that target waits
+`PREXON_SESSION_RETRY_SECONDS=300`. The wait doubles after each further rental
+that produced no verdict, up to one hour, and clears once a session reaches a
+verdict. Refused rentals cost nothing and are retried at the first wait.
+
 Each target has one active session. Frozen profile versions drain in finalized
 order, preserving benchmark settings. Dataset membership and later finalized
 entropy freeze one plan before provisioning. See [datasets](datasets.md) and
@@ -126,7 +142,9 @@ Persistent model downloads are staged locally; engines restart between
 configurations. Draft-only hot swapping is not enabled.
 
 Requests and session ownership are persisted before provisioning. Ambiguous rent
-outcomes reuse the saved request/key. Shutdown reconciles rentals before closing
+outcomes reuse the saved request/key. A definite refusal, such as no matching GPU,
+ends the session at once; the next session retries under a new rental identity
+after the retry wait. Shutdown reconciles rentals before closing
 background workers. Failed deletion retains stopping state until confirmed cleanup
 or provider expiry. Provider polling and billing can lag; use account limits.
 

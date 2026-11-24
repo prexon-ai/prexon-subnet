@@ -2,6 +2,8 @@
 
 import json
 import struct
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from shared.config import TargetConfig
 from shared.contracts import (
@@ -159,3 +161,48 @@ def write_profile(path, head, **updates):
     }
     path.write_text(json.dumps(data))
     return path
+
+
+class PrunedChainNode:
+    """A non-archive RPC node: state older than `window` blocks has been discarded."""
+
+    def __init__(self, head, reveals, window=50):
+        self.head, self.reveals, self.window = head, reveals, window
+        self.substrate = self
+        self.timestamp_queries = []
+        self.weights = []
+
+    def _require_state(self, block):
+        if block < self.head - self.window:
+            raise RuntimeError(f"State discarded for block {block}")
+
+    def get_chain_finalised_head(self):
+        return "finalized-hash"
+
+    def get_block_number(self, block_hash):
+        return self.head
+
+    def metagraph(self, netuid, block):
+        self._require_state(block)
+        return SimpleNamespace(
+            neurons=[SimpleNamespace(uid=1, hotkey="miner"), SimpleNamespace(uid=0, hotkey="burn")]
+        )
+
+    def get_all_revealed_commitments(self, netuid, block):
+        self._require_state(block)
+        return {
+            hotkey: tuple(entry for entry in entries if entry[0] <= block)
+            for hotkey, entries in self.reveals.items()
+        }
+
+    def get_block_hash(self, block):
+        return f"hash-{block}"
+
+    def get_timestamp(self, block):
+        self.timestamp_queries.append(block)
+        self._require_state(block)
+        return datetime.fromtimestamp(1_800_000_000 + block * 12, UTC)
+
+    def set_weights(self, **kwargs):
+        self.weights.append(dict(zip(kwargs["uids"], kwargs["weights"], strict=True)))
+        return SimpleNamespace(success=True)

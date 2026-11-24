@@ -66,6 +66,39 @@ def test_untrusted_archive_cannot_escape_or_link(tmp_path, name, kind):
     assert not (tmp_path / "escape").exists()
 
 
+@pytest.mark.parametrize("name", ["config.json/", "./config.json", "model.safetensors//"])
+def test_archive_member_names_must_be_plain_file_names(tmp_path, name):
+    # These spellings resolve to an existing file name; they must be refused as
+    # unsafe, never surface as a filesystem error during extraction.
+    path = tmp_path / "aliased.tar.gz"
+    with tarfile.open(path, "w:gz", format=tarfile.USTAR_FORMAT) as archive:
+        for member_name in (name, name.strip("./")):
+            member = tarfile.TarInfo(member_name)
+            member.size = 2
+            archive.addfile(member, io.BytesIO(b"{}"))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="archive member"):
+        extract_package(path, tmp_path / "extract", digest, 1024)
+
+
+def test_deeply_nested_config_is_rejected_as_invalid(tmp_path):
+    checkpoint = make_checkpoint(tmp_path / "head")
+    (checkpoint / "config.json").write_bytes(b"[" * 100_000)
+    with pytest.raises(ValueError, match="nest"):
+        validate_checkpoint(checkpoint, 1024**2)
+
+
+@pytest.mark.parametrize("dtype", [["F32"], {"F32": 1}, None, 7])
+def test_non_text_tensor_dtype_is_rejected_as_invalid(tmp_path, dtype):
+    checkpoint = make_checkpoint(tmp_path / "head")
+    header = json.dumps({"weight": {"dtype": dtype, "shape": [2], "data_offsets": [0, 8]}}).encode()
+    (checkpoint / "model.safetensors").write_bytes(
+        struct.pack("<Q", len(header)) + header + b"\0" * 8
+    )
+    with pytest.raises(ValueError, match="dtype"):
+        validate_checkpoint(checkpoint, 1024**2)
+
+
 def test_checkpoint_rejects_remote_code_and_invalid_tensor_offsets(tmp_path):
     checkpoint = make_checkpoint(tmp_path / "head")
     validate_checkpoint(checkpoint, 1024**2)

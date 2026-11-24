@@ -228,6 +228,10 @@ class Settings(FrozenModel):
     early_queue_depth: int = Field(default=10, ge=1)
     session_seconds: int = Field(default=4 * 3600, ge=60)
     session_max_cost: Positive = 100
+    # First wait before renting again after a session that reached no verdict; it doubles.
+    session_retry_seconds: Positive = 300
+    # Evaluations without a verdict before a submission is set aside as stalled.
+    max_evaluation_attempts: int = Field(default=3, ge=1, le=100)
     publish_seconds: Positive = 600
     provider: Literal["lium", "local"] = "lium"
     chain: Literal["bittensor", "file"] = "bittensor"

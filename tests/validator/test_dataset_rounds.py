@@ -18,7 +18,7 @@ class Chain:
     height = 110
     finalized_block = None
 
-    def scan(self, start_block=None):
+    def scan(self, start_block=None, known=()):
         return ChainSnapshot(
             block=self.height,
             finalized_block=self.finalized_block,

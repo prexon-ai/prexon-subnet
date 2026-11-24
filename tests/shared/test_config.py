@@ -1,6 +1,11 @@
 import json
+import os
+import re
+from pathlib import Path
 
 import pytest
+import yaml
+from dotenv import dotenv_values
 
 from shared.config import Settings, load_settings
 
@@ -138,3 +143,25 @@ def test_evaluation_configuration_ignores_unrelated_validator_settings(monkeypat
     settings = load_settings("evaluation", None)
     assert settings.role == "evaluation" and settings.session_seconds == 60
     assert settings.targets == ()
+
+
+def test_compose_validator_writes_only_to_its_data_volume(monkeypatch):
+    # The container user cannot write to /app, where a relative path would resolve.
+    root = Path(__file__).resolve().parents[2]
+    values = {k: v for k, v in dotenv_values(root / ".env.example").items() if v}
+    compose = yaml.safe_load((root / "docker/compose.yaml").read_text())
+    for key, value in compose["services"]["validator"]["environment"].items():
+        values[key] = re.sub(r"\$\{[A-Z0-9_]+:-([^}]*)\}", r"\1", str(value))
+    for key in [key for key in os.environ if key.startswith("PREXON_")]:
+        monkeypatch.delenv(key)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    settings = load_settings("validator", env_file=None)
+    for field in (
+        "state_path",
+        "dashboard_path",
+        "upload_policy_path",
+        "dataset_cache",
+        "ssh_known_hosts",
+    ):
+        assert Path(getattr(settings, field)).is_relative_to("/data"), field

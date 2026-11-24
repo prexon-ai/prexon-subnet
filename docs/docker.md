@@ -16,7 +16,8 @@ docker compose --env-file .env -f docker/compose.yaml up --build -d
 Images run as UID 10001. Empty target slots start an idle installation. Configure
 production targets using the [validator guide](validator.md) before enabling them.
 Compose uses one `.env`: the validator receives controller settings, while the API
-receives selected API/storage values. It maps runtime paths to `/data`.
+receives selected API/storage values. It maps runtime paths to `/data`, including
+the SSH `known_hosts` file used for rented workers.
 
 | Service | Host mount | Container path / access |
 | --- | --- | --- |
