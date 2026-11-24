@@ -74,11 +74,20 @@ target, runtime, and hardware before production.
 
 ## Emissions
 
-Each target's five most recent promoted winners occupy its reward slots. Every
-eligible slot earns one fifth of that target's allocation. An award ends at its
-recorded expiry (five days by default) or displacement by five later winners.
-Expiry does not reset the incumbent. Missing, expired, or UID/hotkey-ineligible
-shares burn; no shares are redistributed. Awards aggregate across targets. Retries
+Each target's whole allocation goes to its most recent promoted winners, newest
+first:
+
+| Winners | Split of the target's allocation |
+| --- | --- |
+| 1 | 100% |
+| 2 | 70% / 30% |
+| 3 or more | 50% / 35% / 15% to the three most recent |
+
+Rewards do not expire: a winner is paid until three newer winners replace it. A
+winner whose hotkey no longer owns its UID is passed over and the next most recent
+winner moves up, so nothing is burned while a target has an eligible winner. A
+target with no eligible winner burns its own allocation. Dropping out of the split
+does not reset the incumbent. Awards aggregate across targets. Retries
 do not create duplicate awards or reset their start times. Weight publication is a
 separate retryable chain operation, not a new promotion.
 

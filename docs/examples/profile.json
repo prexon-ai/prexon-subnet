@@ -47,7 +47,6 @@
     "max_reference_drift": 0.05,
     "repeats": 5,
     "warmup_requests": 2,
-    "award_seconds": 432000,
     "max_checkpoint_bytes": 4294967296,
     "max_job_seconds": 7200
   },

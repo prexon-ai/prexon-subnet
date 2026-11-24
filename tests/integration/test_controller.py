@@ -127,7 +127,7 @@ def test_chain_to_winner_and_recovery_is_idempotent(tmp_path):
     assert len(state.awards()) == 1
     assert len(provider.rents) == 1
     assert provider.deleted
-    assert chain.published[-1][1] == 0.2
+    assert chain.published[-1] == {1: 1.0}
     assert state.awards()[0].promoted_at == 21603
 
 

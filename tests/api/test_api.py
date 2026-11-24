@@ -45,7 +45,8 @@ def test_end_to_end_public_views_never_include_private_job_configuration(tmp_pat
     targets = client.get("/api/v1/targets").json()
     assert targets["items"][0]["model_id"] == target.model_id
     assert targets["updated_at"] == 21603
-    assert client.get("/api/v1/winners").json()["items"][0]["eligible"] is True
+    # The only winner receives the target's whole allocation.
+    assert client.get("/api/v1/winners").json()["items"][0]["share"] == 1
     report = client.get(f"/api/v1/evaluations/{job.job_id}")
     assert report.status_code == 200
     assert report.json()["score"] == 2
@@ -103,8 +104,7 @@ def test_legacy_snapshot_details_without_verified_releases_are_hidden(tmp_path):
         hotkey=submission.hotkey,
         uid=1,
         promoted_at=1,
-        expires_at=2,
-        eligible=False,
+        share=1,
     )
     path = tmp_path / "dashboard.json"
     path.write_text(

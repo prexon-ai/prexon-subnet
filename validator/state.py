@@ -770,7 +770,6 @@ class State:
                     hotkey=job.commitment.hotkey,
                     uid=job.commitment.uid,
                     promoted_at=now,
-                    expires_at=now + job.target.policy.award_seconds,
                     artifact=job.commitment.artifact,
                 )
                 conn.execute(

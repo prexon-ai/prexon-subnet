@@ -131,7 +131,7 @@ def test_snapshot_hides_unpublished_winners_and_cleans_stale_public_reports(tmp_
     assert not list(reports.glob("*.json"))
 
 
-def test_only_winners_publish_and_expired_releases_keep_archived_reports(tmp_path):
+def test_only_winners_publish_and_releases_keep_archived_reports(tmp_path):
     from api.queries import PublishedViews
     from validator.dashboard import publish_snapshot
     from validator.publication import publish_winners
@@ -170,12 +170,13 @@ def test_only_winners_publish_and_expired_releases_keep_archived_reports(tmp_pat
     publish_winners(state, private, public, "", 205)
     path = tmp_path / "dashboard" / "snapshot.json"
     snapshot = publish_snapshot(
-        state, path, (profile,), {1: "winner"}, {0: 1}, profile.policy.award_seconds + 202, 20
+        state, path, (profile,), {1: "winner"}, {1: 1}, 202 + 10 * 365 * 86400, 20
     )
     assert len(snapshot.releases) == 1
     assert {s.hotkey for s in snapshot.submissions} == {"winner"}
     assert {e.submission_id for e in snapshot.evaluations} == {winner_job.commitment.identity}
-    assert snapshot.winners[0].eligible is False
+    # Rewards do not expire: years later the only winner still holds the full share.
+    assert snapshot.winners[0].share == 1
     assert "private" not in path.read_text()
     assert len(list(Path(public.root).rglob("*.tar.gz"))) == 1
     path.write_text(
@@ -226,6 +227,26 @@ def test_one_missing_winner_source_does_not_starve_new_winners(tmp_path):
     publish_winners(state, private, public, "", 205)
     assert set(state.publications()) == {job.commitment.identity}
     assert len(state.awards()) == 2
+
+
+def test_public_winners_list_the_rewarded_heads_with_their_shares(tmp_path):
+    from validator.dashboard import publish_snapshot
+    from validator.publication import publish_winners
+
+    state, private, public, profile, first_job, package = winning_state(tmp_path)
+    add_next_winner(state, private, profile, first_job, tmp_path)
+    publish_winners(state, private, public, "", 205)
+    path = tmp_path / "dashboard" / "snapshot.json"
+    owners = {1: "winner", 2: "next-winner"}
+    snapshot = publish_snapshot(state, path, (profile,), owners, {}, 206, 20)
+    assert [(w.hotkey, w.share) for w in snapshot.winners] == [
+        ("next-winner", 0.7),
+        ("winner", 0.3),
+    ]
+    # The newest winner left the subnet, so the older one moves up to the whole allocation.
+    owners[2] = "someone-else"
+    snapshot = publish_snapshot(state, path, (profile,), owners, {}, 207, 20)
+    assert [(w.hotkey, w.share) for w in snapshot.winners] == [("winner", 1.0)]
 
 
 def add_next_winner(state, private, profile, first_job, tmp_path):

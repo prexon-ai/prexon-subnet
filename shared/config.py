@@ -119,6 +119,8 @@ class Policy(FrozenModel):
     max_reference_drift: float = Field(default=0.05, ge=0, lt=1)
     repeats: int = Field(default=5, ge=3, le=100)
     warmup_requests: int = Field(default=2, ge=1)
+    # Unused: rewards no longer expire. Kept so existing profiles and their
+    # competition IDs stay valid.
     award_seconds: Positive = 5 * 24 * 3600
     max_checkpoint_bytes: int = Field(default=4 * 1024**3, ge=1024)
     max_job_seconds: int = Field(default=7200, ge=60)

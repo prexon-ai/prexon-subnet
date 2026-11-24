@@ -57,82 +57,69 @@ def test_noisy_gain_requires_confidence():
     assert score_evidence(j, r.model_copy(update={"measurements": tuple(rows)})).outcome == "lost"
 
 
-def test_five_successive_awards_expiry_and_ownership():
+def _award(t, i, *, promoted_at=None, uid=None):
+    return Award(
+        submission_id=f"{i:064x}",
+        competition_id=t.identity,
+        hotkey=f"miner{uid or i}",
+        uid=uid or i,
+        promoted_at=promoted_at or 100 + i,
+        artifact="c" * 64,
+    )
+
+
+@pytest.mark.parametrize(
+    "winners,expected",
+    [
+        (1, {1: 1.0}),
+        (2, {2: 0.7, 1: 0.3}),
+        (3, {3: 0.5, 2: 0.35, 1: 0.15}),
+        # Older winners drop out once three newer ones exist.
+        (6, {6: 0.5, 5: 0.35, 4: 0.15}),
+    ],
+)
+def test_latest_winners_share_the_whole_allocation_newest_first(winners, expected):
     t = target()
-    awards = [
-        Award(
-            submission_id=f"{i:064x}",
-            competition_id=t.identity,
-            hotkey=f"miner{i}",
-            uid=i,
-            promoted_at=100 + i,
-            expires_at=1000,
-            artifact="c" * 64,
-        )
-        for i in range(1, 7)
-    ]
-    owners = {i: f"miner{i}" for i in range(1, 7)}
-    assert emission_weights(awards, (t,), owners, 200, 0) == {
-        2: 0.2,
-        3: 0.2,
-        4: 0.2,
-        5: 0.2,
-        6: 0.2,
-    }
-    owners[6] = "replacement"
+    awards = [_award(t, i) for i in range(1, winners + 1)]
+    owners = {i: f"miner{i}" for i in range(1, winners + 1)}
     weights = emission_weights(awards, (t,), owners, 200, 0)
-    assert weights[0] == pytest.approx(0.2)
-    assert 1 not in weights and 6 not in weights
-    assert emission_weights(awards, (t,), owners, 1000, 0) == {0: 1.0}
+    assert weights == pytest.approx(expected)
+    assert 0 not in weights  # nothing is burned while a winner exists
 
 
-def test_two_targets_split_and_empty_slots_burn():
+def test_rewards_do_not_expire_while_no_newer_winner_arrives():
+    t = target()
+    ten_years_later = 100 + 10 * 365 * 86400
+    weights = emission_weights([_award(t, 1)], (t,), {1: "miner1"}, ten_years_later, 0)
+    assert weights == {1: 1.0}
+
+
+def test_winner_that_left_the_subnet_is_passed_over_for_the_next_latest():
+    t = target()
+    awards = [_award(t, i) for i in range(1, 5)]
+    owners = {i: f"miner{i}" for i in range(1, 5)}
+    owners[4] = "replacement"  # the newest winner's UID now belongs to someone else
+    weights = emission_weights(awards, (t,), owners, 200, 0)
+    assert weights == pytest.approx({3: 0.5, 2: 0.35, 1: 0.15})
+
+
+def test_one_miner_holding_several_ranks_collects_each_share():
+    t = target()
+    awards = [_award(t, 1, uid=7), _award(t, 2, uid=8), _award(t, 3, uid=7)]
+    weights = emission_weights(awards, (t,), {7: "miner7", 8: "miner8"}, 200, 0)
+    assert weights == pytest.approx({7: 0.65, 8: 0.35})
+
+
+def test_target_without_an_eligible_winner_burns_only_its_own_allocation():
     a, b = target(1, 20), target(2, 80)
-    awards = [
-        Award(
-            submission_id="a" * 64,
-            competition_id=a.identity,
-            hotkey="miner",
-            uid=1,
-            promoted_at=100,
-            expires_at=1000,
-            artifact="c" * 64,
-        ),
-        Award(
-            submission_id="b" * 64,
-            competition_id=b.identity,
-            hotkey="miner",
-            uid=1,
-            promoted_at=100,
-            expires_at=1000,
-            artifact="d" * 64,
-        ),
-    ]
-    weights = emission_weights(awards, (a, b), {1: "miner"}, 200, 0)
-    assert weights[1] == pytest.approx(0.2)
-    assert weights[0] == pytest.approx(0.8)
+    weights = emission_weights([_award(a, 1)], (a, b), {1: "miner1"}, 200, 0)
+    assert weights == pytest.approx({1: 0.2, 0: 0.8})
     assert emission_weights([], (), {}, 200, 0) == {0: 1.0}
 
 
 def test_equal_promotion_times_preserve_durable_succession_order():
     t = target()
-    awards = [
-        Award(
-            submission_id=f"{100 - i:064x}",
-            competition_id=t.identity,
-            hotkey=f"miner{i}",
-            uid=i,
-            promoted_at=100,
-            expires_at=1000,
-            artifact="c" * 64,
-        )
-        for i in range(1, 7)
-    ]
+    awards = [_award(t, i, promoted_at=100) for i in range(1, 7)]
     owners = {i: f"miner{i}" for i in range(1, 7)}
-    assert emission_weights(awards, (t,), owners, 200, 0) == {
-        2: 0.2,
-        3: 0.2,
-        4: 0.2,
-        5: 0.2,
-        6: 0.2,
-    }
+    weights = emission_weights(awards, (t,), owners, 200, 0)
+    assert weights == pytest.approx({6: 0.5, 5: 0.35, 4: 0.15})

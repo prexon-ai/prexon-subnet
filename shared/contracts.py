@@ -158,7 +158,8 @@ class Award(FrozenModel):
     hotkey: str
     uid: int
     promoted_at: Positive
-    expires_at: Positive
+    # Rewards no longer expire; only awards recorded before that change carry a value.
+    expires_at: Positive | None = None
     artifact: Digest
 
 
@@ -220,8 +221,8 @@ class PublicWinner(FrozenModel):
     hotkey: str
     uid: int
     promoted_at: float
-    expires_at: float
-    eligible: bool
+    # Share of its target's emissions this winner currently receives.
+    share: Annotated[float, Field(gt=0, le=1)]
     checkpoint_url: str | None = None
     published_at: float | None = None
 

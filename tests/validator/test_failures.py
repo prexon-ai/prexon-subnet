@@ -168,7 +168,7 @@ def test_disabling_all_models_clears_previously_initialized_weights(tmp_path):
         controller.settings.model_copy(update={"targets": ()}), state, store, chain, provider
     )
     controller.tick(22201)
-    assert chain.published[-1][1] == 0.2
+    assert chain.published[-1] == {1: 1.0}
     disabled.tick(22802)
     assert chain.published[-1] == {0: 1.0}
 

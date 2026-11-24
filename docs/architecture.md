@@ -64,7 +64,7 @@ multiple controllers owning one state file.
 Rental IDs, requests, deadlines and cleanup status are persisted. Cleanup retries
 retain ownership until deletion or provider expiry is established. Promotion,
 public copying and chain weight publication are separate idempotent operations;
-retries cannot duplicate awards or reset their earning windows.
+retries cannot duplicate awards or change their place in the reward order.
 
 ## Standalone evaluation
 

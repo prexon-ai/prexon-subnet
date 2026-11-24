@@ -18,6 +18,7 @@ from shared.contracts import (
     PublicTarget,
     PublicWinner,
 )
+from validator.competition import reward_shares
 from validator.state import State, target_key
 
 
@@ -112,20 +113,17 @@ def publish_snapshot(
     winners = []
     awards = state.awards(targets)
     for target in targets:
-        recent = [a for a in awards if a.competition_id == target.identity][-5:]
-        for award in recent:
+        own = [a for a in awards if a.competition_id == target.identity]
+        for award, share in reward_shares(own, owners, now):
             release = releases.get(award.submission_id)
             if release is None:
                 continue
             winners.append(
                 PublicWinner(
-                    **award.model_dump(),
+                    **award.model_dump(exclude={"expires_at"}),
+                    share=share,
                     checkpoint_url=release.checkpoint_url,
                     published_at=release.published_at,
-                    eligible=(
-                        award.promoted_at <= now < award.expires_at
-                        and owners.get(award.uid) == award.hotkey
-                    ),
                 )
             )
     snapshot = DashboardSnapshot(

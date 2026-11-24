@@ -20,8 +20,8 @@ production use.
 4. A candidate wins by beating target-only decoding, the public reference, and
    the incumbent under correctness, reliability, and measurement gates.
 5. Only winners' checkpoints and detailed results are published. Each target's
-   five latest promoted winners occupy equal reward slots; expired or ineligible
-   shares burn.
+   whole allocation goes to its latest winners: one winner takes all of it, two
+   split it 70/30, and the three latest split it 50/35/15, newest first.
 
 Up to two targets can run independently, with separate hardware and queues.
 See [scoring and emissions](docs/scoring.md) for the formula and reward rules.

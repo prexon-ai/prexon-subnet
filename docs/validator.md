@@ -150,8 +150,9 @@ or provider expiry. Provider polling and billing can lag; use account limits.
 
 Promotion, emission publication, and public copying are separate retryable steps.
 A publication worker verifies the exact evaluated package before releasing it.
-Failures do not duplicate awards or extend earning windows. Historical winner
-releases remain public after reward expiry; pending/losing details remain private.
+Failures do not duplicate awards or change their order. Historical winner
+releases remain public after a winner drops out of the reward split;
+pending/losing details remain private.
 
 For development, `PREXON_CHAIN=file` and `PREXON_PROVIDER=local` use explicit chain
 fixtures and local storage. Real evaluation still requires a compatible GPU

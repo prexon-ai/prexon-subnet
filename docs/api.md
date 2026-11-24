@@ -24,7 +24,7 @@ Paths below are relative to the versioned base.
 | `GET /submissions` | Released winning submissions |
 | `GET /evaluations` | Released winners' decisions and aggregate metrics |
 | `GET /evaluations/{job_id}` | A released winner's report |
-| `GET /winners` | Published five-slot history, eligibility, and expiry |
+| `GET /winners` | Currently rewarded winners and each one's share of its target |
 | `GET /winners/{submission_id}/checkpoint` | Verified local package or public HTTPS redirect |
 | `GET /emissions` | UID shares, including burn |
 | `GET /snapshot` | Public view and historical release manifest |
@@ -38,7 +38,8 @@ marked stale. Missing/invalid views return 503; private or unknown records retur
 
 Only released winners' checkpoints and detailed results are public. Losing and
 pending heads, individual statuses, and similarity evidence stay private. Public
-queue counts are anonymous. Historical winner downloads survive award expiry.
+queue counts are anonymous. Historical winner downloads stay available after a
+winner drops out of the reward split.
 
 ## Upload configuration
 
