@@ -107,7 +107,8 @@ HTTPS. Upload authorization defaults to a 900-second PUT URL, a request no older
 than 60 seconds, and four grants per hotkey per rolling hour. Keep clocks
 synchronized. The API also requires a fresh validator policy, current subnet
 registration, an accepted competition, and a package within its target/global
-limits. See [API settings and responses](api.md) for retryable failures.
+limits. See [upload API settings and responses](api.md#upload-api) for retryable
+failures.
 
 For local development, pass `--api-url http://127.0.0.1:8000/api/v1`. The URL is the
 versioned base; the client adds only `/uploads`, including when the base ends in `/`.
@@ -119,9 +120,12 @@ become due at **at least 10 ready candidates** or **six hours after the oldest
 unevaluated ready commitment**; that age survives retries. This is a scheduling
 trigger, not a completion-time promise.
 
-Your checkpoint and individual evaluation details remain private unless promoted
-and published as a winner. The public dashboard exposes anonymous queue counts and
-released winners; the chain itself still exposes commitment information.
+Your checkpoint and detailed measurements remain private unless your head is
+crowned and published. The public dashboard lists every queued and evaluated
+submission with its hotkey, UID and submission time, and shows the result and
+measured speedup once it has been evaluated, so you can follow your own head.
+Loss reasons are not published. The chain itself still exposes commitment
+information.
 
 The competition rewards measured improvements, not package metadata changes.
 Repackaging identical config/weights does not create another eligible claim.

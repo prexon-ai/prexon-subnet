@@ -20,6 +20,7 @@ from shared.uploads import UploadPolicy, UploadTarget
 from validator.chain import Chain, ChainSnapshot
 from validator.competition import emission_weights, score_evidence
 from validator.dashboard import publish_snapshot
+from validator.history import publish_history
 from validator.providers import Provider
 from validator.publication import publish_winners
 from validator.scheduler import claim_due_sessions
@@ -77,6 +78,7 @@ class Controller:
 
     def tick(self, now: float) -> None:
         scan_ok = False
+        self.state.touch_models(self.settings.targets, now)
         if self.settings.targets or self.state.metadata("chain_initialized"):
             try:
                 cursor = self.state.metadata("finalized_block")
@@ -187,18 +189,15 @@ class Controller:
                 )
         except Exception as exc:
             log.error("winner_release_retry error=%s", type(exc).__name__)
-        try:
-            publish_snapshot(
-                self.state,
-                self.settings.dashboard_path,
-                self.settings.targets,
-                owners,
-                weights,
-                now,
-                self.snapshot.block,
-            )
-        except (OSError, ValueError) as exc:
-            log.error("dashboard_publication_retry error=%s", type(exc).__name__)
+        # Rewards depend on who owns each UID. Without a fresh chain read the last
+        # published files stay, rather than showing every reward as gone.
+        if scan_ok or not self.settings.targets:
+            public = (self.state, self.public_store, self.settings.targets, owners)
+            try:
+                publish_snapshot(*public, weights, now, self.snapshot.block)
+                publish_history(*public, now, self.snapshot.block)
+            except (OSError, ValueError) as exc:
+                log.error("dashboard_publication_retry error=%s", type(exc).__name__)
 
     def _publish_upload_policy(
         self,

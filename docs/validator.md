@@ -2,7 +2,8 @@
 
 The validator is an always-on CPU controller. It discovers chain commitments,
 checks candidates, rents temporary GPUs, evaluates improvements, and publishes
-emission weights. The API runs alongside it with the same `.env`.
+emission weights. It publishes the dashboard's data to public storage. The
+upload API runs alongside it with the same `.env`.
 
 ## Configure the controller
 
@@ -21,9 +22,10 @@ contribute 1.0 to the winning threshold.
 
 Prepare the [dataset pool](datasets.md), replace placeholder digests, and configure
 the subnet netuid, wallet, and [Hippius/Lium deployment](docker.md). Production
-requires separate staging, canonical, and winner buckets plus a stable public
-winner URL. Store S3 and rental credentials in `.env`. The API receives selected
-settings in Compose; it does not mount the validator database or wallet files.
+requires separate uploads, private, and public buckets plus a stable public
+winner URL. Store S3 and rental credentials in `.env`. The upload API receives
+selected settings in Compose; it does not mount the validator database or wallet
+files.
 
 Keep `PREXON_STATE_PATH` on persistent local storage. A process lock permits one
 controller per state file. Use separate state for different chain/subnet contexts.
@@ -129,9 +131,8 @@ order, preserving benchmark settings. Dataset membership and later finalized
 entropy freeze one plan before provisioning. See [datasets](datasets.md) and
 [scoring](scoring.md) for the measurement and promotion protocol.
 
-Back up validator SQLite and private artifacts. Preserve state across upgrades;
-legacy unchecked work is revalidated before rental. Only trusted owned records
-may reuse canonical bytes when their staging upload is unavailable.
+Back up validator SQLite and private artifacts. Only trusted owned records may
+reuse canonical bytes when their staging upload is unavailable.
 
 ## Rentals and publication
 
@@ -151,8 +152,12 @@ or provider expiry. Provider polling and billing can lag; use account limits.
 Promotion, emission publication, and public copying are separate retryable steps.
 A publication worker verifies the exact evaluated package before releasing it.
 Failures do not duplicate awards or change their order. Historical winner
-releases remain public after a winner drops out of the reward split;
-pending/losing details remain private.
+releases remain public after a winner drops out of the reward split. The model
+history lists every queued and evaluated submission with its miner, time,
+result and speedup; pending and losing checkpoints and loss reasons remain
+private. The snapshot and history files are written to public storage under
+`dashboard/`, where the website reads them: when they change, and at least every
+five minutes for the two that carry the time. A failed upload is retried.
 
 For development, `PREXON_CHAIN=file` and `PREXON_PROVIDER=local` use explicit chain
 fixtures and local storage. Real evaluation still requires a compatible GPU

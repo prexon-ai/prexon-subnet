@@ -5,8 +5,9 @@ DFlash2 draft heads; validators measure their serving speedup against the target
 model and reward successive improvements.
 
 The project includes miner tools, a standalone evaluator, a CPU validator,
-temporary GPU workers, and a dashboard/upload API. Training uses SpecForge;
-evaluation uses SGLang. Model and GPU combinations must be qualified before
+temporary GPU workers, and a small upload API. The validator publishes the
+dashboard's data to public storage, where the website reads it. Training uses
+SpecForge; evaluation uses SGLang. Model and GPU combinations must be qualified before
 production use.
 
 ## How it works
@@ -19,7 +20,8 @@ production use.
    unevaluated submission is **six hours old**. Submissions share a frozen workload.
 4. A candidate wins by beating target-only decoding, the public reference, and
    the incumbent under correctness, reliability, and measurement gates.
-5. Only winners' checkpoints and detailed results are published. Each target's
+5. Only winners' checkpoints and detailed results are published; every evaluated
+   submission's result and speedup appear in the public model history. Each target's
    whole allocation goes to its latest winners: one winner takes all of it, two
    split it 70/30, and the three latest split it 50/35/15, newest first.
 
@@ -38,13 +40,14 @@ uv run prexon-validator --once
 uv run prexon-api
 ```
 
-Both target slots are disabled by default. This creates an idle dashboard without
-chain access, storage credentials, or a GPU. The local API is
-`http://127.0.0.1:8000/api/v1`; interactive documentation is at `/api/docs`.
+Both target slots are disabled by default. This writes an idle dashboard under
+`runtime/public/` without chain access, storage credentials, or a GPU. The local
+upload API is `http://127.0.0.1:8000/api/v1`; interactive documentation is at
+`/api/docs`. It only authorizes miners' uploads and serves no data.
 
 For continuous operation, run `uv run prexon-validator` in a separate terminal.
-The validator and API share one `.env` on the same machine. Configure targets,
-storage, chain credentials, and a qualified worker image using the
+The validator and upload API share one `.env` on the same machine. Configure
+targets, storage, chain credentials, and a qualified worker image using the
 [validator guide](docs/validator.md). [Docker deployment](docs/docker.md) runs
 both CPU services and documents the `https://prexonai.com/api/v1` routing.
 
@@ -103,13 +106,14 @@ require real revisions, image digests, and a prepared dataset manifest.
 | `validator/` | Chain discovery, admission, scheduling, scoring, and GPU workers |
 | `miner/` | Training, inspection, packaging, and submission |
 | `evaluation/` | Shared benchmark library and standalone CLI |
-| `api/` | Public winner views and signed upload URLs |
+| `api/` | Signed upload URLs for miners |
 | `shared/` | Configuration, contracts, checkpoints, storage, and transports |
 | `docker/` | CPU service and GPU worker images |
 | `tests/` | CPU integration tests and explicit GPU/network checks |
 
 [Architecture](docs/architecture.md) explains the trust boundaries.
-[API reference](docs/api.md) documents endpoints and upload signing.
+[Published data and the upload API](docs/api.md) documents the public files and
+upload signing.
 
 ## Development
 

@@ -1,11 +1,11 @@
-"""Publish explicit public views; private state and raw jobs never leave this boundary."""
+"""Publish the public snapshot; private state and raw jobs never leave this boundary."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from pathlib import Path
 
+from shared.artifacts import ArtifactStore
 from shared.config import TargetConfig
 from shared.contracts import (
     Commitment,
@@ -19,12 +19,13 @@ from shared.contracts import (
     PublicWinner,
 )
 from validator.competition import reward_shares
+from validator.public_files import publish_file
 from validator.state import State, target_key
 
 
 def publish_snapshot(
     state: State,
-    path: Path,
+    store: ArtifactStore,
     targets: tuple[TargetConfig, ...],
     owners: Mapping[int, str],
     weights: dict[int, float],
@@ -97,19 +98,6 @@ def publish_snapshot(
                 timings=result.timings,
             )
         )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    report_dir = path.parent / "reports"
-    report_dir.mkdir(exist_ok=True)
-    allowed_reports = {f"{e.job_id}.json" for e in evaluations}
-    for old_report in (*report_dir.glob("*.json"), *report_dir.glob("*.tmp")):
-        if old_report.name not in allowed_reports:
-            old_report.unlink()
-    for evaluation in evaluations:
-        report = report_dir / f"{evaluation.job_id}.json"
-        temp_report = report.with_suffix(".tmp")
-        temp_report.write_text(evaluation.model_dump_json() + "\n")
-        temp_report.chmod(0o644)
-        temp_report.replace(report)
     winners = []
     awards = state.awards(targets)
     for target in targets:
@@ -120,7 +108,7 @@ def publish_snapshot(
                 continue
             winners.append(
                 PublicWinner(
-                    **award.model_dump(exclude={"expires_at"}),
+                    **award.model_dump(),
                     share=share,
                     checkpoint_url=release.checkpoint_url,
                     published_at=release.published_at,
@@ -136,8 +124,6 @@ def publish_snapshot(
         releases=tuple(releases.values()),
         emissions=tuple(Emission(uid=uid, share=share) for uid, share in sorted(weights.items())),
     )
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(snapshot.model_dump_json() + "\n")
-    temporary.chmod(0o644)
-    temporary.replace(path)
+    data = (snapshot.model_dump_json() + "\n").encode()
+    publish_file(state, store, "dashboard/snapshot.json", data, now, timed=True)
     return snapshot

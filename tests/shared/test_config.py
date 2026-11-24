@@ -159,7 +159,6 @@ def test_compose_validator_writes_only_to_its_data_volume(monkeypatch):
     settings = load_settings("validator", env_file=None)
     for field in (
         "state_path",
-        "dashboard_path",
         "upload_policy_path",
         "dataset_cache",
         "ssh_known_hosts",

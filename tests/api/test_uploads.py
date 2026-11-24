@@ -72,7 +72,6 @@ def upload_env(tmp_path):
         upload_staging_root="s3://private-staging/prefix",
         upload_state_path=tmp_path / "api.sqlite3",
         upload_policy_path=tmp_path / "private/policy.json",
-        dashboard_path=tmp_path / "public/dashboard.json",
     )
     write_policy(settings)
     presigner = Presigner()

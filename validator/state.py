@@ -34,13 +34,14 @@ CREATE TABLE IF NOT EXISTS submissions (
  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
  commitment TEXT NOT NULL, manifest TEXT NOT NULL, content_id TEXT NOT NULL,
  block INTEGER NOT NULL, position INTEGER NOT NULL, hotkey TEXT NOT NULL,
- status TEXT NOT NULL, reason TEXT, score REAL
+ status TEXT NOT NULL, reason TEXT, score REAL, submitted_at REAL
 );
 CREATE INDEX IF NOT EXISTS queue ON submissions(profile_id,status,block,position,hotkey);
 CREATE TABLE IF NOT EXISTS sessions (
  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
  target_key TEXT NOT NULL, state TEXT NOT NULL, started_at REAL NOT NULL,
- deadline REAL NOT NULL, pod_id TEXT, request TEXT, finished_at REAL
+ deadline REAL NOT NULL, pod_id TEXT, request TEXT, finished_at REAL,
+ cutoff_block INTEGER, sampling TEXT, dataset_plan_digest TEXT, seed_block INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS active_target ON sessions(target_key)
  WHERE state != 'finished';
@@ -52,7 +53,7 @@ CREATE TABLE IF NOT EXISTS session_members (
 CREATE TABLE IF NOT EXISTS jobs (
  id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
  submission_id TEXT NOT NULL REFERENCES submissions(id), job TEXT NOT NULL,
- status TEXT NOT NULL, result TEXT, decision TEXT
+ status TEXT NOT NULL, result TEXT, decision TEXT, decided_at REAL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS active_job ON jobs(session_id) WHERE status='running';
 CREATE TABLE IF NOT EXISTS incumbents (
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS awards (
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS discoveries (
  id TEXT PRIMARY KEY, commitment TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
- reason TEXT, attempts INTEGER NOT NULL DEFAULT 0
+ reason TEXT, attempts INTEGER NOT NULL DEFAULT 0, seen_at REAL
 );
 CREATE TABLE IF NOT EXISTS publications (
  submission_id TEXT PRIMARY KEY REFERENCES submissions(id), release TEXT NOT NULL
@@ -94,66 +95,9 @@ class State:
         self.connection = sqlite3.connect(path, timeout=10, isolation_level=None)
         path.chmod(0o600)
         self.connection.row_factory = sqlite3.Row
-        version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version > 5:
-            raise ValueError("State schema is newer than this controller")
         self.connection.execute("PRAGMA journal_mode=WAL")
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.executescript(_SCHEMA)
-        if "attempts" not in {
-            r[1] for r in self.connection.execute("PRAGMA table_info(discoveries)")
-        }:
-            self.connection.execute(
-                "ALTER TABLE discoveries ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
-            )
-        columns = {r[1] for r in self.connection.execute("PRAGMA table_info(sessions)")}
-        for name, kind in (
-            ("cutoff_block", "INTEGER"),
-            ("sampling", "TEXT"),
-            ("dataset_plan_digest", "TEXT"),
-            ("seed_block", "INTEGER"),
-        ):
-            if name not in columns:
-                self.connection.execute(f"ALTER TABLE sessions ADD COLUMN {name} {kind}")
-        for table, column in (("submissions", "submitted_at"), ("discoveries", "seen_at")):
-            if column not in {r[1] for r in self.connection.execute(f"PRAGMA table_info({table})")}:
-                self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} REAL")
-        with self.transaction() as conn:
-            if version and version < 5:
-                self._revalidate_legacy_intake(conn)
-            conn.execute("PRAGMA user_version=5")
-
-    def _revalidate_legacy_intake(self, conn: sqlite3.Connection) -> None:
-        # Existing ready rows have no mandatory fingerprint evidence. Revalidate before rent.
-        rows = conn.execute(
-            "SELECT s.id,s.commitment FROM submissions s WHERE status IN ('ready','running') "
-            "AND NOT EXISTS(SELECT 1 FROM similarity_verdicts v WHERE v.submission_id=s.id)"
-        ).fetchall()
-        if rows:
-            # Claimed sessions may not have a running job yet. Stop those too.
-            conn.execute("UPDATE sessions SET state='stopping' WHERE state!='finished'")
-            conn.execute("UPDATE jobs SET status='abandoned' WHERE status='running'")
-        observed = time.time()
-        for row in rows:
-            commitment = Commitment.model_validate_json(row["commitment"])
-            submitted_at = commitment.submitted_at
-            if submitted_at is None:
-                discovered = conn.execute(
-                    "SELECT seen_at FROM discoveries WHERE id=?", (row["id"],)
-                ).fetchone()
-                submitted_at = (
-                    discovered[0] if discovered and discovered[0] is not None else observed
-                )
-            conn.execute(
-                "INSERT INTO discoveries(id,commitment,status,seen_at) VALUES(?,?,'pending',?) "
-                "ON CONFLICT(id) DO UPDATE SET status='pending'",
-                (row["id"], row["commitment"], submitted_at),
-            )
-            conn.execute(
-                "UPDATE submissions SET status='pending_similarity',submitted_at="
-                "COALESCE(submitted_at,?) WHERE id=?",
-                (submitted_at, row["id"]),
-            )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -746,11 +690,12 @@ class State:
             ):
                 raise ValueError("Cannot promote an expired or stopped job")
             conn.execute(
-                "UPDATE jobs SET status=?,result=?,decision=? WHERE id=?",
+                "UPDATE jobs SET status=?,result=?,decision=?,decided_at=? WHERE id=?",
                 (
                     decision.outcome,
                     result.model_dump_json(),
                     decision.model_dump_json(),
+                    now,
                     job.job_id,
                 ),
             )
@@ -891,6 +836,60 @@ class State:
             dict(row)
             for row in self.connection.execute(
                 "SELECT * FROM jobs WHERE decision IS NOT NULL ORDER BY rowid"
+            )
+        ]
+
+    def touch_models(self, targets: tuple[TargetConfig, ...], now: float) -> None:
+        """Remember when each enabled model was first and most recently active."""
+        with self.transaction():
+            for target in targets:
+                key = f"model_period:{target_key(target)}"
+                known = json.loads(self.metadata(key, "{}"))
+                period = {
+                    "active_from": known.get("active_from", now),
+                    "active_to": now,
+                    "slot": target.slot,
+                    "allocation": target.allocation,
+                }
+                self.set_metadata(key, json.dumps(period, sort_keys=True))
+
+    def model_periods(self) -> dict[str, dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT key,value FROM metadata WHERE key LIKE 'model_period:%'"
+        )
+        return {row[0].removeprefix("model_period:"): json.loads(row[1]) for row in rows}
+
+    def models(self) -> list[TargetConfig]:
+        """The latest registered profile of every model the validator has run."""
+        latest: dict[str, TargetConfig] = {}
+        for row in self.connection.execute("SELECT config FROM profiles ORDER BY rowid"):
+            target = TargetConfig.model_validate_json(row[0])
+            latest[target_key(target)] = target
+        return list(latest.values())
+
+    def queue_rows(self, target: TargetConfig) -> list[dict[str, Any]]:
+        """A model's waiting heads: the one on the GPU first, then in evaluation order."""
+        return [
+            dict(row)
+            for row in self.connection.execute(
+                "SELECT s.id,s.commitment,s.status,s.submitted_at FROM submissions s "
+                "JOIN profiles p ON p.id=s.profile_id WHERE p.model_id=? AND p.revision=? "
+                "AND s.status IN ('ready','running') "
+                "ORDER BY s.status='running' DESC,s.block,s.position,s.hotkey,s.id",
+                (target.model_id, target.revision),
+            )
+        ]
+
+    def result_rows(self, target: TargetConfig) -> list[dict[str, Any]]:
+        """Every head of a model with a verdict, with the job that decided it."""
+        return [
+            dict(row)
+            for row in self.connection.execute(
+                "SELECT s.id,s.commitment,s.status,s.submitted_at,j.decision,j.decided_at "
+                "FROM submissions s JOIN profiles p ON p.id=s.profile_id "
+                "JOIN jobs j ON j.submission_id=s.id AND j.status=s.status "
+                "WHERE p.model_id=? AND p.revision=? AND s.status IN ('won','lost')",
+                (target.model_id, target.revision),
             )
         ]
 

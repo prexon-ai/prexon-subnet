@@ -12,7 +12,8 @@ def test_idle_controller_runs_without_external_credentials(tmp_path):
     env = tmp_path / ".env"
     env.write_text(
         f"PREXON_STATE_PATH={tmp_path}/state.sqlite\n"
-        f"PREXON_DASHBOARD_PATH={tmp_path}/public/dashboard.json\n"
+        f"PREXON_PUBLIC_ARTIFACT_ROOT={tmp_path}/public\n"
+        f"PREXON_UPLOAD_POLICY_PATH={tmp_path}/intake-policy/upload-policy.json\n"
         "PREXON_MODEL_1_ID=\nPREXON_MODEL_2_ID=\n"
     )
     result = subprocess.run(
@@ -24,7 +25,7 @@ def test_idle_controller_runs_without_external_credentials(tmp_path):
     )
     assert result.returncode == 0
     snapshot = DashboardSnapshot.model_validate_json(
-        (tmp_path / "public/dashboard.json").read_bytes()
+        (tmp_path / "public/dashboard/snapshot.json").read_bytes()
     )
     assert snapshot.targets == ()
     assert snapshot.emissions[0].uid == 0
@@ -92,7 +93,8 @@ def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(tmp_p
         role="validator",
         netuid=1,
         state_path=state_path,
-        dashboard_path=tmp_path / "public/dashboard.json",
+        public_artifact_root=str(tmp_path / "public"),
+        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
         artifact_root=str(tmp_path / "artifacts"),
     )
     monkeypatch.setattr("validator.main.load_settings", lambda *_: settings)

@@ -1,8 +1,9 @@
 # Architecture
 
 Prexon separates miner tooling, benchmark execution, validator authority, and
-public API access. Both roles use the `evaluation` library; it depends on shared
-contracts and transports, not on validator or miner implementations.
+upload authorization. Miners and validators both use the `evaluation` library;
+it depends on shared contracts and transports, not on validator or miner
+implementations.
 
 ## Submission flow
 
@@ -25,20 +26,24 @@ identity and priority; only validated candidates become GPU-ready.
 
 | Storage | Contents | Access |
 | --- | --- | --- |
-| Private staging bucket | Hotkey-scoped uploads | API-issued PUT capabilities; validator reads |
-| Private canonical bucket | Verified packages, qualification, jobs, plans, results | Validator; workers receive scoped URLs |
-| Public winner bucket | Verified promoted packages | Public HTTPS downloads |
+| Uploads bucket (private) | Hotkey-scoped unchecked uploads | API-issued PUT capabilities; validator reads |
+| Private bucket | Verified packages, qualification, jobs, plans, results | Validator; workers receive scoped URLs |
+| Public bucket | Verified promoted packages and the dashboard's data | Public HTTPS reads |
 | Validator SQLite | Discoveries, fingerprints, sessions, jobs, awards, releases | Controller thread only |
 | API SQLite | Upload nonce and quota state | API only |
 
-The validator and trusted API share S3 settings in one host `.env`. Compose limits
-API file mounts to public views, the read-only upload policy directory, and its
-own replay database. Workers receive no wallet, rental credentials, or database.
+The validator and trusted upload API share S3 settings in one host `.env`.
+Compose limits the API's file mounts to the read-only upload policy directory and
+its own replay database. Public data is read from the public bucket, never from
+the validator's machine. Workers receive no wallet, rental credentials, or
+database.
 
 Signed object metadata binds the API-authorized competition to the archive
 manifest. A digest under a different hotkey cannot claim another miner's upload.
-Private fingerprints, losing heads, and individual losing results stay private.
-Public views contain released winners and anonymous queue counts.
+Private fingerprints, losing heads' checkpoints, loss reasons and detailed losing
+measurements stay private. Public views contain released winners and, for every
+model, its queue and each evaluated submission with miner, time, result and
+speedup.
 
 ## Scheduling and recovery
 

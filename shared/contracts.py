@@ -158,8 +158,6 @@ class Award(FrozenModel):
     hotkey: str
     uid: int
     promoted_at: Positive
-    # Rewards no longer expire; only awards recorded before that change carry a value.
-    expires_at: Positive | None = None
     artifact: Digest
 
 
@@ -225,6 +223,71 @@ class PublicWinner(FrozenModel):
     share: Annotated[float, Field(gt=0, le=1)]
     checkpoint_url: str | None = None
     published_at: float | None = None
+
+
+class QueuedSubmission(FrozenModel):
+    """A head waiting for evaluation. Its checkpoint stays private."""
+
+    submission_id: Digest
+    hotkey: str
+    uid: int
+    submitted_at: float
+    status: Literal["evaluating", "waiting"]
+
+
+class EvaluatedSubmission(FrozenModel):
+    """The public outcome of one evaluation; only a crowned head has a checkpoint."""
+
+    submission_id: Digest
+    hotkey: str
+    uid: int
+    submitted_at: float
+    evaluated_at: float
+    crowned: bool
+    # Throughput relative to target-only decoding; absent when no score was measured.
+    speedup: float | None = None
+    # The best published speedup it had to beat; 1 when nothing had won yet.
+    previous_best: float | None = None
+    # Share of the model's emissions it receives now.
+    share: Annotated[float, Field(ge=0, le=1)] = 0
+    checkpoint_url: str | None = None
+
+
+class ModelSummary(FrozenModel):
+    # Stable and URL-safe.
+    id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=96)
+    model_id: str
+    revision: str
+    slot: int
+    active_from: float
+    # None while the model is still active.
+    active_to: float | None = None
+    allocation: float
+    methods: tuple[str, ...]
+    gpu_type: str
+    gpu_count: int
+    queued: int = Field(ge=0)
+    evaluated: int = Field(ge=0)
+    winners: int = Field(ge=0)
+    best_speedup: float | None = None
+    # Current split of the model's emissions, largest first.
+    reward_shares: tuple[float, ...] = ()
+
+
+class ModelHistory(ModelSummary):
+    schema_version: Literal[1] = 1
+    # In the order the heads will run.
+    queue: tuple[QueuedSubmission, ...] = ()
+    # Newest result first.
+    submissions: tuple[EvaluatedSubmission, ...] = ()
+
+
+class ModelIndex(FrozenModel):
+    schema_version: Literal[1] = 1
+    updated_at: Positive
+    finalized_block: int = Field(ge=0)
+    # Active models first, then past ones, most recently active first.
+    models: tuple[ModelSummary, ...] = ()
 
 
 class Emission(FrozenModel):

@@ -17,17 +17,17 @@ class WinnerRelease(FrozenModel):
     submission_id: Digest
     source_artifact: Digest
     artifact: Digest
-    checkpoint_url: str
+    # None when the package was released to a local directory nobody else can reach.
+    checkpoint_url: str | None
     published_at: Positive
 
     @model_validator(mode="after")
     def verified_identity(self) -> WinnerRelease:
         if self.artifact != self.source_artifact:
             raise ValueError("Published package digest must equal the evaluated source digest")
-        parsed = urlparse(self.checkpoint_url)
-        local_path = f"/v1/winners/{self.submission_id}/checkpoint"
-        if self.checkpoint_url in {f"/api{local_path}", local_path}:
+        if self.checkpoint_url is None:
             return self
+        parsed = urlparse(self.checkpoint_url)
         if (
             parsed.scheme != "https"
             or not parsed.hostname
@@ -39,5 +39,5 @@ class WinnerRelease(FrozenModel):
             or not parsed.path.endswith(f"/{public_release_key(self.source_artifact)}")
             or ".." in parsed.path.split("/")
         ):
-            raise ValueError("Release URL must be a public HTTPS object or its local winner route")
+            raise ValueError("Release URL must be a public HTTPS object")
         return self

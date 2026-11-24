@@ -49,11 +49,11 @@ def _separate_namespaces(private: ArtifactStore, public: ArtifactStore) -> None:
     raise ValueError("Public artifacts must use a separate private/public storage namespace")
 
 
-def _checkpoint_url(public: ArtifactStore, base_url: str, award: Award) -> str:
+def _checkpoint_url(public: ArtifactStore, base_url: str, award: Award) -> str | None:
     if not base_url:
         if public.bucket:
             raise ValueError("Public object storage requires a stable HTTPS release base URL")
-        return f"/api/v1/winners/{award.submission_id}/checkpoint"
+        return None
     parsed = urlparse(base_url)
     if (
         parsed.scheme != "https"

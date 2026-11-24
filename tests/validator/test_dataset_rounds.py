@@ -50,7 +50,8 @@ def test_round_waits_for_future_entropy_freezes_members_and_survives_restart(tmp
         targets=(target,),
         chain="file",
         dataset_cache=tmp_path / "datasets",
-        dashboard_path=tmp_path / "dashboard.json",
+        public_artifact_root=str(tmp_path / "public"),
+        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
     )
     store, chain = ArtifactStore(str(tmp_path / "artifacts")), Chain()
     provider = RentalBoundary(store)
@@ -100,7 +101,8 @@ def test_entropy_anchor_is_observed_after_membership_freezes(tmp_path, monkeypat
         targets=(target,),
         chain="file",
         dataset_cache=tmp_path / "datasets",
-        dashboard_path=tmp_path / "dashboard.json",
+        public_artifact_root=str(tmp_path / "public"),
+        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
     )
     store, chain = ArtifactStore(str(tmp_path / "artifacts")), Chain()
     provider = RentalBoundary(store)

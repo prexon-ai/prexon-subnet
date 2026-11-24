@@ -146,8 +146,8 @@ def prepare_commitment(
 ) -> PreparedSubmission | None:
     """Perform storage/CPU work with snapshots; never access controller SQLite.
 
-    Canonical fallback is reserved for the controller's previously owned migrated
-    rows. A newly discovered production commitment must prove its hotkey-scoped
+    Canonical fallback is reserved for submissions the controller already holds and
+    must check again. A newly discovered commitment must prove its hotkey-scoped
     staging object even if that digest already exists in canonical storage.
     """
     source = _candidate_source(store, commitment, settings, allow_canonical_snapshot)

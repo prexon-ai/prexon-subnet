@@ -12,7 +12,8 @@ from api.uploads import UploadService
 from miner.submit import submit
 from shared.artifacts import ArtifactStore
 from shared.config import Settings
-from shared.contracts import Commitment
+from shared.contracts import Commitment, DashboardSnapshot
+from shared.releases import public_release_key
 from shared.uploads import submission_key
 from tests.factories import evidence
 from tests.integration.test_controller import setup_pipeline
@@ -48,7 +49,6 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
         upload_staging_root="s3://staging",
         upload_state_path=tmp_path / "api/uploads.sqlite3",
         upload_policy_path=settings.upload_policy_path,
-        dashboard_path=settings.dashboard_path,
         public_artifact_root=settings.public_artifact_root,
     )
     api = TestClient(
@@ -115,7 +115,10 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
     assert state.ready_count(target.identity) == 1
     assert state.similarity_verdict(chain.commitments[0].identity)["outcome"] == "pass"
     assert canonical.exists(f"objects/{digest}")
-    assert api.get("/api/v1/submissions").json()["items"] == []
+    # Nothing about the head is published before it has won.
+    public = ArtifactStore(settings.public_artifact_root)
+    pending = DashboardSnapshot.model_validate_json(public.read_bytes("dashboard/snapshot.json"))
+    assert (pending.submissions, pending.releases) == ((), ())
     assert provider.rents == []
     controller.tick(now + 21600)
     job = provider.jobs[0]
@@ -125,9 +128,12 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
     canonical.write_bytes(f"jobs/{job.job_id}/result.json", result.model_dump_json().encode())
     controller.tick(now + 21603)
     assert len(state.awards()) == 1
-    winner = api.get("/api/v1/winners").json()["items"][0]
-    release = api.get(winner["checkpoint_url"])
-    assert release.status_code == 200
-    assert release.content == (tmp_path / "head.tar.gz").read_bytes()
-    assert "s3.hippius.com" not in api.get("/api/v1/snapshot").text
+    published = public.read_bytes("dashboard/snapshot.json")
+    snapshot = DashboardSnapshot.model_validate_json(published)
+    winner, release = snapshot.winners[0], snapshot.releases[0]
+    assert (winner.hotkey, winner.share) == (hotkey.ss58_address, 1)
+    assert release.source_artifact == digest
+    # The released package is the exact file the miner uploaded.
+    assert public.read_bytes(public_release_key(digest)) == (tmp_path / "head.tar.gz").read_bytes()
+    assert b"s3.hippius.com" not in published
     state.close()

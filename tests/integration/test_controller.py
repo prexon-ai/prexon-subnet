@@ -98,7 +98,6 @@ def setup_pipeline(tmp_path, t=None):
         targets=(t,),
         state_path=tmp_path / "state.sqlite",
         artifact_root=store.root,
-        dashboard_path=tmp_path / "public/dashboard.json",
         chain="file",
         provider="local",
         schedule_seconds=21600,
@@ -272,3 +271,63 @@ def test_job_that_never_reports_is_given_up_after_the_attempt_limit(tmp_path):
     row = state.submissions()[0]
     assert (row["status"], row["reason"]) == ("stalled", "evaluation_timeout")
     assert not state.active_sessions()
+
+
+def test_nothing_private_about_a_job_reaches_public_storage(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    controller.tick(21600)
+    j = provider.jobs[0]
+    result = evidence(j).model_copy(update={"started_at": 21601, "finished_at": 21602})
+    store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
+    controller.tick(21603)
+    published = sorted((tmp_path / "public").rglob("*.json"))
+    assert {path.relative_to(tmp_path / "public/artifacts").as_posix() for path in published} == {
+        "dashboard/snapshot.json",
+        "dashboard/index.json",
+        "dashboard/models/model1-aaaaaaa.json",
+    }
+    snapshot = json.loads((tmp_path / "public/artifacts/dashboard/snapshot.json").read_text())
+    assert snapshot["targets"][0]["model_id"] == t.model_id
+    assert [e["score"] for e in snapshot["evaluations"]] == [2]
+    for path in published:
+        text = path.read_text()
+        for private in (
+            "candidate_url",
+            "qualification_url",
+            "prompts",
+            "hidden",
+            "secret",
+            "wallet",
+            "job.json",
+        ):
+            assert private not in text, (path.name, private)
+
+
+def test_tick_publishes_model_history_and_keeps_it_while_the_chain_is_unreachable(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    controller.tick(21600)
+    j = provider.jobs[0]
+    result = evidence(j).model_copy(update={"started_at": 21601, "finished_at": 21602})
+    store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
+    controller.tick(21603)
+    # The website reads these from public storage, never from this machine.
+    public = ArtifactStore(controller.settings.public_artifact_root)
+    index = json.loads(public.read_bytes("dashboard/index.json"))
+    (model,) = index["models"]
+    assert (model["winners"], model["reward_shares"], model["active_from"]) == (1, [1.0], 21600)
+    history = json.loads(public.read_bytes(f"dashboard/models/{model['id']}.json"))
+    assert [(s["hotkey"], s["crowned"], s["share"]) for s in history["submissions"]] == [
+        ("miner", True, 1.0)
+    ]
+    snapshot = json.loads(public.read_bytes("dashboard/snapshot.json"))
+    assert [w["share"] for w in snapshot["winners"]] == [1.0]
+
+    def offline(*args, **kwargs):
+        raise TimeoutError("rpc unreachable")
+
+    chain.scan = offline
+    controller.tick(21700)
+    # Who owns each UID is unknown while the chain is unreachable, so the last
+    # published files stay instead of showing every reward as gone.
+    assert json.loads(public.read_bytes("dashboard/index.json")) == index
+    assert json.loads(public.read_bytes("dashboard/snapshot.json")) == snapshot

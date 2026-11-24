@@ -98,10 +98,11 @@ class ArtifactStore:
         self.write_bytes(f"objects/{digest}", data)
         return digest
 
-    def write_file(self, key: str, source: Path) -> None:
+    def write_file(self, key: str, source: Path, *, content_type: str | None = None) -> None:
         full = self._key(key)
         if self.bucket:
-            self.client.upload_file(str(source), self.bucket, full)
+            extra = {"ExtraArgs": {"ContentType": content_type}} if content_type else {}
+            self.client.upload_file(str(source), self.bucket, full, **extra)
         else:
             output = Path(self.root) / full
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -111,11 +112,11 @@ class ArtifactStore:
                     shutil.copyfileobj(stream, temp)
             temp_path.replace(output)
 
-    def write_bytes(self, key: str, data: bytes) -> None:
+    def write_bytes(self, key: str, data: bytes, *, content_type: str | None = None) -> None:
         with tempfile.NamedTemporaryFile() as temp:
             temp.write(data)
             temp.flush()
-            self.write_file(key, Path(temp.name))
+            self.write_file(key, Path(temp.name), content_type=content_type)
 
     def read_bytes(self, key: str, max_bytes: int = 32 * 1024**2) -> bytes:
         full = self._key(key)

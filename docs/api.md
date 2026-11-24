@@ -1,45 +1,80 @@
-# API reference
+# Published data and the upload API
+
+Nothing public is served from the validator's machine. The validator publishes
+JSON files to public storage, where the website and anyone else reads them. The
+only service is a small API that authorizes miners' private uploads.
+
+## Published files
+
+The validator writes these under its public root (`PREXON_PUBLIC_ARTIFACT_ROOT`).
+With `s3://prexon-public` and the public base
+`https://s3.hippius.com/prexon-public`, they are public at
+`https://s3.hippius.com/prexon-public/<object>`.
+
+| Object | Contents |
+| --- | --- |
+| `dashboard/snapshot.json` | Targets, rewarded winners and their shares, emissions, released winners' reports, and the release manifest |
+| `dashboard/index.json` | Every model the subnet has run, active first, with its summary |
+| `dashboard/models/{id}.json` | One model's queue and every evaluated submission |
+| `winners/{digest}.tar.gz` | Released winner packages |
+
+A file is uploaded when what it shows changes. `snapshot.json` and `index.json`
+also carry `updated_at` (epoch UTC seconds) and `finalized_block`, and are
+uploaded again at least every five minutes, so a reader can tell a quiet subnet
+from a stopped validator: treat a copy older than 15 minutes as stale. A failed
+upload is retried on the next tick. While the chain is unreachable nothing is
+uploaded and the last copies stay in place.
+
+The website reads the `dashboard/` folder through its `PREXON_DATA_URL` setting.
+With a local public root (the default, `runtime/public/artifacts`) the same files
+are written under that directory, and packages have no public address.
+
+Only crowned heads have a public checkpoint and detailed measurements. For every
+queued or evaluated submission the model history shows the miner (hotkey and
+UID), the submission time and, once evaluated, the result and measured speedup.
+Checkpoints of pending and losing heads, loss reasons, rejected submissions, and
+similarity evidence stay private. Historical winner downloads stay available
+after a winner drops out of the reward split.
+
+### Snapshot
+
+`snapshot.json` holds `targets` (identity, allocation, hardware, and queue
+summary), `winners` (the currently rewarded heads and each one's share of its
+target), `emissions` (UID shares, including burn), `submissions` and
+`evaluations` (released winners with their decisions and aggregate metrics, the
+1,000 most recent), and `releases` (every released package with its digest and
+address).
+
+### Model history
+
+`index.json` has `updated_at`, `finalized_block`, and one summary per model: its
+URL-safe `id`, `model_id`, `revision`, `slot`, `active_from`, `active_to` (null
+while active), `allocation`, hardware, queue length, evaluated and winner counts,
+`best_speedup`, and the current `reward_shares`. Active models come first; a
+model that left its slot stays listed with the time it was last active.
+
+`models/{id}.json` adds the model's `queue` (the head being evaluated first, then
+the rest in the order they will run) and its `submissions`, newest result first.
+Each submission has `crowned`, `speedup`, `previous_best` (the best published
+speedup it had to beat), its current `share` of the model's emissions, and a
+`checkpoint_url` when it was crowned and its package is in public storage. A
+retired model keeps its submissions but has no queue and pays no rewards.
+
+## Upload API
 
 Production base: **`https://prexonai.com/api/v1`**. Local base:
 `http://127.0.0.1:8000/api/v1`. Reverse proxies must preserve `/api`.
 
-The validator and API share `.env` on one machine:
+The validator and upload API share `.env` on one machine:
 
 ```bash
 uv sync --frozen --extra validator --extra api
 uv run prexon-api
 ```
 
-Interactive documentation is at `/api/docs`; the schema is at `/api/openapi.json`.
-`GET /api/health` checks process liveness. Public reads work with uploads disabled.
-
-## Public endpoints
-
-Paths below are relative to the versioned base.
-
-| Method and path | Response |
-| --- | --- |
-| `GET /status` | View age, finalized block, anonymous queue/session counts |
-| `GET /targets` | Target identity, allocation, hardware, and queue summary |
-| `GET /submissions` | Released winning submissions |
-| `GET /evaluations` | Released winners' decisions and aggregate metrics |
-| `GET /evaluations/{job_id}` | A released winner's report |
-| `GET /winners` | Currently rewarded winners and each one's share of its target |
-| `GET /winners/{submission_id}/checkpoint` | Verified local package or public HTTPS redirect |
-| `GET /emissions` | UID shares, including burn |
-| `GET /snapshot` | Public view and historical release manifest |
-| `POST /uploads` | Authenticated short-lived private PUT capability |
-
-Collections support `offset>=0` and `1<=limit<=1000`; responses contain
-`schema_version`, `updated_at`, `total`, and `items`. The snapshot retains 1,000
-recent winning submissions/evaluations; older winner reports remain individually
-accessible. `updated_at` is epoch UTC seconds. Views older than 180 seconds are
-marked stale. Missing/invalid views return 503; private or unknown records return 404.
-
-Only released winners' checkpoints and detailed results are public. Losing and
-pending heads, individual statuses, and similarity evidence stay private. Public
-queue counts are anonymous. Historical winner downloads stay available after a
-winner drops out of the reward split.
+Its one endpoint is `POST /uploads`, which returns an authenticated short-lived
+private PUT capability. Interactive documentation is at `/api/docs`; the schema is
+at `/api/openapi.json`. `GET /api/health` checks process liveness.
 
 ## Upload configuration
 

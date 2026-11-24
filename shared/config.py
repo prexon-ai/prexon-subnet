@@ -25,14 +25,6 @@ class FrozenModel(BaseModel):
 
 def identity(value: BaseModel, *, exclude: set[str] | None = None) -> str:
     data = value.model_dump(mode="json", exclude=exclude)
-    if isinstance(value, TargetConfig) and value.similarity is None:
-        data.pop("similarity", None)
-    if isinstance(value, TargetConfig) and value.datasets is None:
-        # Optional dataset fields must not invalidate queued pre-dataset profiles/qualifications.
-        data.pop("datasets")
-        for workload in data["workloads"]:
-            if not workload["input_ids"]:
-                workload.pop("input_ids")
     encoded = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -119,9 +111,6 @@ class Policy(FrozenModel):
     max_reference_drift: float = Field(default=0.05, ge=0, lt=1)
     repeats: int = Field(default=5, ge=3, le=100)
     warmup_requests: int = Field(default=2, ge=1)
-    # Unused: rewards no longer expire. Kept so existing profiles and their
-    # competition IDs stay valid.
-    award_seconds: Positive = 5 * 24 * 3600
     max_checkpoint_bytes: int = Field(default=4 * 1024**3, ge=1024)
     max_job_seconds: int = Field(default=7200, ge=60)
 
@@ -224,7 +213,6 @@ class Settings(FrozenModel):
     public_artifact_root: str = "runtime/public/artifacts"
     public_artifact_base_url: str = ""
     dataset_cache: Path = Path("runtime/datasets")
-    dashboard_path: Path = Path("runtime/public/dashboard.json")
     poll_seconds: Positive = 30
     schedule_seconds: Positive = 6 * 3600
     early_queue_depth: int = Field(default=10, ge=1)
@@ -331,8 +319,7 @@ def load_settings(
         fields = {
             name: field
             for name, field in fields.items()
-            if name
-            in {"api_host", "api_port", "dashboard_path", "uploads_enabled", "public_artifact_root"}
+            if name in {"api_host", "api_port", "uploads_enabled", "public_artifact_root"}
             or name.startswith("upload_")
             and name != "upload_api_url"
         }
