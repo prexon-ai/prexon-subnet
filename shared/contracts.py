@@ -201,7 +201,11 @@ class PublicSubmission(FrozenModel):
 class PublicEvaluation(FrozenModel):
     job_id: str
     submission_id: Digest
+    # The competition it was scored under; a changed benchmark profile has a new one.
     competition_id: Digest
+    # The target it measured, which outlasts profile changes.
+    model_id: str
+    revision: str
     outcome: str
     reason: str
     score: float | None = None
@@ -246,7 +250,9 @@ class EvaluatedSubmission(FrozenModel):
     crowned: bool
     # Throughput relative to target-only decoding; absent when no score was measured.
     speedup: float | None = None
-    # The best published speedup it had to beat; 1 when nothing had won yet.
+    # The speedup it had to beat, measured in the same evaluation: the faster of the
+    # incumbent and the public reference, or 1 when neither beat target-only decoding.
+    # Absent, like the speedup, when no score was measured.
     previous_best: float | None = None
     # Share of the model's emissions it receives now.
     share: Annotated[float, Field(ge=0, le=1)] = 0

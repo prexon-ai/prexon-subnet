@@ -170,6 +170,7 @@ class PrunedChainNode:
         self.head, self.reveals, self.window = head, reveals, window
         self.substrate = self
         self.timestamp_queries = []
+        self.block_hash_queries = []
         self.weights = []
 
     def _require_state(self, block):
@@ -196,6 +197,7 @@ class PrunedChainNode:
         }
 
     def get_block_hash(self, block):
+        self.block_hash_queries.append(block)
         return f"hash-{block}"
 
     def get_timestamp(self, block):

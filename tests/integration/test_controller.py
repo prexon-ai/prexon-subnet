@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import io
 import json
+import sqlite3
 import struct
 import tarfile
 
@@ -128,6 +129,47 @@ def test_chain_to_winner_and_recovery_is_idempotent(tmp_path):
     assert provider.deleted
     assert chain.published[-1] == {1: 1.0}
     assert state.awards()[0].promoted_at == 21603
+
+
+def test_result_finished_before_the_job_deadline_counts_when_collected_after_it(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    controller.tick(21600)
+    j = provider.jobs[0]
+    # The two-hour job budget ends well inside the four-hour session.
+    assert j.deadline == 28800
+    result = evidence(j).model_copy(update={"started_at": 21601, "finished_at": 28795})
+    store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
+    controller.tick(28820)  # the first poll after the worker finished
+    assert state.incumbent(t) == j.commitment.artifact
+    assert state.submissions()[0]["status"] == "won"
+
+
+def test_unreadable_result_counts_as_a_timeout_once_the_job_deadline_passes(tmp_path):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+    controller.tick(21600)
+    j = provider.jobs[0]
+    store.write_bytes(f"jobs/{j.job_id}/result.json", b"not a result")
+    controller.tick(21630)  # retried while the job still has time
+    assert state.running_job(j.session_id) == j
+    controller.tick(28820)
+    row = state.submissions()[0]
+    assert (row["status"], row["reason"]) == ("ready", "evaluation_timeout")
+    assert not state.active_sessions()
+
+
+def test_a_failure_while_publishing_the_dashboard_does_not_stop_the_controller(
+    tmp_path, monkeypatch
+):
+    controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("validator.controller.publish_history", locked)
+    for now in (21600, 21630):
+        controller.tick(now)  # the main loop stops if a tick raises
+    assert len(chain.published) == 1
+    assert len(state.active_sessions()) == 1
 
 
 def test_expired_session_deletes_pod_and_keeps_unfinished_queue(tmp_path):

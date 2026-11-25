@@ -60,6 +60,17 @@ def test_chain_scan_does_not_reread_the_time_of_reveals_it_already_knows():
     assert node.timestamp_queries == []
 
 
+def test_chain_scan_reads_each_reveal_block_hash_once():
+    # Every scanned block lists the whole reveal history, here one reveal at block 99.
+    node = PrunedChainNode(head=100, reveals={"miner": ((99, "px1:" + "c" * 64),)})
+    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    first = chain.scan()
+    node.head = 110
+    later = chain.scan(100, known={first.commitments[0].identity})  # replays blocks 101-110
+    assert [c.identity for c in later.commitments] == [first.commitments[0].identity]
+    assert node.block_hash_queries == [99]
+
+
 @pytest.mark.parametrize("failure", ["discarded", "zero"])
 def test_chain_scan_keeps_a_new_reveal_whose_block_time_is_unavailable(failure):
     node = PrunedChainNode(head=190, reveals={"miner": ((99, "px1:" + "c" * 64),)})

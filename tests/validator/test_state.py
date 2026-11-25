@@ -109,6 +109,22 @@ def test_promotion_is_idempotent_and_inconclusive_preserves_priority(tmp_path):
     assert len(s.awards()) == 1
 
 
+def test_promotion_depends_on_when_the_evidence_finished_not_when_it_was_read(tmp_path):
+    s = State(tmp_path / "state.sqlite")
+    t = target()
+    admit(s, t, 1)
+    session = s.claim_session(t, 21600, 21600, 10, 3600)
+    j = s.create_job(session["id"], candidate_url="file:///candidate", now=21601)
+    assert j.deadline == 25200  # the one-hour session ends first
+    won = Decision(outcome="won", reason="qualified", score=2, threshold=1, lower_gain=2)
+    late = evidence(j).model_copy(update={"started_at": 21602, "finished_at": 25201})
+    with pytest.raises(ValueError, match="expired"):
+        s.complete_job(j, late, won, 25190)
+    on_time = late.model_copy(update={"finished_at": 25199})
+    s.complete_job(j, on_time, won, 25230)
+    assert s.incumbent(t) == j.commitment.artifact
+
+
 def test_stale_incumbent_and_duplicate_content_rejected(tmp_path):
     s = State(tmp_path / "state.sqlite")
     t = target()

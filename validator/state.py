@@ -685,8 +685,10 @@ class State:
                 or result.competition_id != job.target.identity
             ):
                 raise ValueError("Result identity is stale")
+            # Evidence finished within the job's budget may be read after it.
             if decision.outcome == "won" and (
-                now > job.deadline or self.session(job.session_id)["state"] != "active"
+                result.finished_at > job.deadline
+                or self.session(job.session_id)["state"] != "active"
             ):
                 raise ValueError("Cannot promote an expired or stopped job")
             conn.execute(
@@ -840,8 +842,20 @@ class State:
         ]
 
     def touch_models(self, targets: tuple[TargetConfig, ...], now: float) -> None:
-        """Remember when each enabled model was first and most recently active."""
+        """Remember when each enabled model was first and most recently active.
+
+        A model retired before periods were recorded gets one from its submissions.
+        """
         with self.transaction():
+            enabled = {target_key(t) for t in targets}
+            periods = self.model_periods()
+            for model in self.models():
+                key = target_key(model)
+                if key not in enabled and key not in periods:
+                    self.set_metadata(
+                        f"model_period:{key}",
+                        json.dumps(self._estimated_period(model, now), sort_keys=True),
+                    )
             for target in targets:
                 key = f"model_period:{target_key(target)}"
                 known = json.loads(self.metadata(key, "{}"))
@@ -852,6 +866,22 @@ class State:
                     "allocation": target.allocation,
                 }
                 self.set_metadata(key, json.dumps(period, sort_keys=True))
+
+    def _estimated_period(self, target: TargetConfig, now: float) -> dict[str, Any]:
+        """From a model's first submission to its last submission or verdict."""
+        first, last = self.connection.execute(
+            "SELECT MIN(s.submitted_at),MAX(COALESCE(j.decided_at,s.submitted_at)) "
+            "FROM submissions s JOIN profiles p ON p.id=s.profile_id "
+            "LEFT JOIN jobs j ON j.submission_id=s.id WHERE p.model_id=? AND p.revision=?",
+            (target.model_id, target.revision),
+        ).fetchone()
+        seen = [time for time in (first, last) if time is not None]
+        return {
+            "active_from": min(seen, default=now),
+            "active_to": max(seen, default=now),
+            "slot": target.slot,
+            "allocation": target.allocation,
+        }
 
     def model_periods(self) -> dict[str, dict[str, Any]]:
         rows = self.connection.execute(

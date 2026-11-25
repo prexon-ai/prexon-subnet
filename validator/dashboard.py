@@ -12,6 +12,7 @@ from shared.contracts import (
     DashboardSnapshot,
     Decision,
     Emission,
+    EvaluationJob,
     EvaluationResult,
     PublicEvaluation,
     PublicSubmission,
@@ -84,11 +85,14 @@ def publish_snapshot(
         decision = Decision.model_validate_json(row["decision"])
         if decision.outcome != "won" or result.submission_id != row["submission_id"]:
             continue
+        measured = EvaluationJob.model_validate_json(row["job"]).target
         evaluations.append(
             PublicEvaluation(
                 job_id=row["id"],
                 submission_id=row["submission_id"],
                 competition_id=result.competition_id,
+                model_id=measured.model_id,
+                revision=measured.revision,
                 outcome=decision.outcome,
                 reason="promoted_winner",
                 score=decision.score,

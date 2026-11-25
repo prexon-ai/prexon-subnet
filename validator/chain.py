@@ -37,6 +37,8 @@ class BittensorChain:
         self.settings = settings
         self.client = client if client is not None else connect(settings)
         self.signer = signer
+        # Finalized block hashes never change; kept for the reveal blocks still listed.
+        self._reveal_hashes: dict[int, str] = {}
 
     def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot:
         """Read finalized reveals; `known` holds commitment identities already discovered.
@@ -53,6 +55,8 @@ class BittensorChain:
         by_hotkey = {hotkey: uid for uid, hotkey in owners.items()}
         found: dict[str, Commitment] = {}
         timestamps: dict[int, float | None] = {}
+        previous = self._reveal_hashes
+        hashes: dict[int, str] = {}
         for block in blocks:
             records = self.client.get_all_revealed_commitments(self.settings.netuid, block=block)
             for hotkey, entries in records.items():
@@ -63,10 +67,13 @@ class BittensorChain:
                     if not match or reveal_block > end:
                         continue
                     revealed_at = int(reveal_block)
+                    if revealed_at not in hashes:
+                        cached = previous.get(revealed_at)
+                        hashes[revealed_at] = cached or self.client.get_block_hash(revealed_at)
                     commitment = Commitment(
                         netuid=self.settings.netuid,
                         block=revealed_at,
-                        block_hash=self.client.get_block_hash(revealed_at),
+                        block_hash=hashes[revealed_at],
                         # Storage does not expose extrinsic positions. Same-block ties are hotkey
                         # then artifact order; position must not depend on a sliding history window.
                         extrinsic_index=0,
@@ -84,6 +91,7 @@ class BittensorChain:
                             update={"submitted_at": timestamps[revealed_at]}
                         )
                     found[identity] = commitment
+        self._reveal_hashes = hashes
         return ChainSnapshot(
             block=end,
             finalized_block=finalized,

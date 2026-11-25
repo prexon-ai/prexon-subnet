@@ -122,6 +122,20 @@ def test_retired_model_keeps_its_results_but_has_no_queue_or_rewards(tmp_path):
     assert [s.hotkey for s in history.submissions] == ["loser", "next-winner", "winner"]
 
 
+def test_model_retired_before_periods_were_recorded_is_dated_by_its_submissions(tmp_path):
+    state, private, public, profile, owners = competition(tmp_path)
+    # A database from before the validator recorded when each model was active.
+    state.connection.execute("DELETE FROM metadata WHERE key LIKE 'model_period:%'")
+    replacement = target(2)
+    state.touch_models((replacement,), 600)
+    index, _ = build_history(state, (replacement,), owners, 700, 30)
+    active, past = index.models
+    assert past.model_id == profile.model_id
+    # Its first head was submitted at 1 and its last verdict was reached at 207.
+    assert (past.active_from, past.active_to) == (1, 207)
+    assert (past.slot, past.allocation, past.evaluated) == (1, 100, 3)
+
+
 class Recording(ArtifactStore):
     """Public storage that notes each upload."""
 
@@ -184,6 +198,17 @@ def test_snapshot_is_uploaded_when_it_changes_and_kept_fresh(tmp_path):
     add_submission(state, private, profile, tmp_path, hotkey="late", uid=6, block=15, now=700)
     publish(300 + REFRESH_SECONDS + 30, 31)
     assert len(store.uploaded) == 3
+
+
+def test_snapshot_evaluations_name_their_model_so_a_profile_change_keeps_them(tmp_path):
+    state, private, public, profile, job, _ = winning_state(tmp_path)
+    publish_winners(state, private, public, "", 202)
+    changed = profile.model_copy(update={"context_length": 4096})
+    snapshot = publish_snapshot(state, public, (changed,), {1: "winner"}, {1: 1.0}, 300, 20)
+    (evaluation,) = snapshot.evaluations
+    # Scored under the earlier profile, but still an evaluation of the current target.
+    assert evaluation.competition_id == profile.identity != snapshot.targets[0].competition_id
+    assert (evaluation.model_id, evaluation.revision) == ("org/model1", "a" * 40)
 
 
 def test_failed_upload_is_retried(tmp_path):

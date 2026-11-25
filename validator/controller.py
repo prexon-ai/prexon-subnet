@@ -196,7 +196,7 @@ class Controller:
             try:
                 publish_snapshot(*public, weights, now, self.snapshot.block)
                 publish_history(*public, now, self.snapshot.block)
-            except (OSError, ValueError) as exc:
+            except Exception as exc:
                 log.error("dashboard_publication_retry error=%s", type(exc).__name__)
 
     def _publish_upload_policy(
@@ -325,6 +325,31 @@ class Controller:
         job = self.state.running_job(session["id"])
         if job is not None:
             result_key = f"jobs/{job.job_id}/result.json"
+            # A result is read even after the deadline: scoring checks when it finished.
+            if self.store.exists(result_key):
+                try:
+                    result = EvaluationResult.model_validate_json(self.store.read_bytes(result_key))
+                    decision = score_evidence(job, result)
+                    self.store.write_bytes(
+                        f"reports/{job.job_id}.json", result.model_dump_json().encode()
+                    )
+                    outcome = self.state.complete_job(
+                        job,
+                        result,
+                        decision,
+                        now,
+                        max_attempts=self.settings.max_evaluation_attempts,
+                    )
+                except ValueError:
+                    # Once the budget is spent, an unusable result is the same as none.
+                    if now < job.deadline:
+                        raise
+                else:
+                    if outcome == "stalled":
+                        log.warning("submission_stalled submission=%s", job.commitment.identity)
+                    if decision.outcome == "inconclusive":
+                        self.stop_session(session, now)
+                    return
             if now >= job.deadline:
                 # The whole job budget passed without a result: one failed attempt.
                 outcome = self.state.timeout_job(
@@ -333,24 +358,6 @@ class Controller:
                 if outcome == "stalled":
                     log.warning("submission_stalled submission=%s", job.commitment.identity)
                 self.stop_session(session, now)
-                return
-            if self.store.exists(result_key):
-                result = EvaluationResult.model_validate_json(self.store.read_bytes(result_key))
-                decision = score_evidence(job, result)
-                self.store.write_bytes(
-                    f"reports/{job.job_id}.json", result.model_dump_json().encode()
-                )
-                outcome = self.state.complete_job(
-                    job,
-                    result,
-                    decision,
-                    now,
-                    max_attempts=self.settings.max_evaluation_attempts,
-                )
-                if outcome == "stalled":
-                    log.warning("submission_stalled submission=%s", job.commitment.identity)
-                if decision.outcome == "inconclusive":
-                    self.stop_session(session, now)
                 return
         else:
             submission = self.state.next_submission(session["id"])

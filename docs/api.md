@@ -45,6 +45,11 @@ target), `emissions` (UID shares, including burn), `submissions` and
 1,000 most recent), and `releases` (every released package with its digest and
 address).
 
+Each evaluation's `competition_id` is the one it was scored under. Changing a
+target's benchmark profile gives it a new competition ID, so evaluations also
+carry the `model_id` and `revision` they measured; match those to a target to
+keep its earlier results.
+
 ### Model history
 
 `index.json` has `updated_at`, `finalized_block`, and one summary per model: its
@@ -55,10 +60,12 @@ model that left its slot stays listed with the time it was last active.
 
 `models/{id}.json` adds the model's `queue` (the head being evaluated first, then
 the rest in the order they will run) and its `submissions`, newest result first.
-Each submission has `crowned`, `speedup`, `previous_best` (the best published
-speedup it had to beat), its current `share` of the model's emissions, and a
-`checkpoint_url` when it was crowned and its package is in public storage. A
-retired model keeps its submissions but has no queue and pays no rewards.
+Each submission has `crowned`, `speedup`, `previous_best` (the speedup it had to
+beat, measured in the same evaluation: the faster of the incumbent and the public
+reference, or 1 when neither beat target-only decoding), its current `share` of
+the model's emissions, and a `checkpoint_url` when it was crowned and its package
+is in public storage. A retired model keeps its submissions but has no queue and
+pays no rewards.
 
 ## Upload API
 
