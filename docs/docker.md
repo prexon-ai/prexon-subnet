@@ -101,8 +101,10 @@ docker build -f docker/Dockerfile.worker \
 
 Use the built worker's registry digest in the target profile and Lium template.
 The template must inject the SSH public key, start SSH, and keep the container
-running. The image installs OpenSSH and uses the base image's SGLang/Torch through
-a venv with system site packages. Verify startup and GPU topology in a pilot.
+running. The image installs OpenSSH and installs Prexon into the base image's own
+Python environment (`$VIRTUAL_ENV`, `/opt/sglang` in SGLang images), leaving SGLang's
+packages as they are; `/opt/prexon/.venv` points at that environment. Verify startup
+and GPU topology in a pilot.
 
 Set `HF_HOME=/mnt/huggingface` for persistent downloads and
 `PREXON_TARGET_CACHE` for local staging (default `/tmp/prexon-targets`). Workers

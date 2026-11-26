@@ -3,7 +3,7 @@
     "dflash2"
   ],
   "engine_version": "0.5.23",
-  "worker_image": "replace-with-qualified-worker-image@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "worker_image": "ghcr.io/prexon-ai/prexon-worker:v0.5.23@sha256:d88e874abdc6a61270a1f2fad49813d612cc22881881cdabde17e0d167013735",
   "lium_template_id": "",
   "dtype": "bfloat16",
   "context_length": 8192,

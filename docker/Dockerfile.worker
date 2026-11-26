@@ -11,7 +11,14 @@ COPY evaluation ./evaluation
 COPY validator ./validator
 COPY miner/__init__.py ./miner/__init__.py
 COPY api/__init__.py ./api/__init__.py
-RUN uv venv --system-site-packages .venv && uv sync --frozen --no-dev \
+# SGLang images keep their Python packages in a virtual environment ($VIRTUAL_ENV,
+# /opt/sglang). Prexon goes into that same environment, so the SGLang server the worker
+# starts runs on exactly the engine's packages; Prexon's few requirements are already met
+# there and are left as they are. Remote commands use /opt/prexon/.venv/bin/python, which
+# is that environment.
+RUN test -n "$VIRTUAL_ENV" \
+    && uv pip install --python "$VIRTUAL_ENV/bin/python" . \
+    && ln -s "$VIRTUAL_ENV" .venv \
     && .venv/bin/python -c "import sglang; import torch; import validator.worker; import evaluation.remote"
 ENV PATH="/opt/prexon/.venv/bin:$PATH" PYTHONUNBUFFERED=1 HF_HOME=/mnt/huggingface
 # Lium's template starts SSH. Local standalone jobs may override this entrypoint.
