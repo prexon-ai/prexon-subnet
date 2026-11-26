@@ -10,9 +10,9 @@ import sys
 import uuid
 from pathlib import Path
 
+from evaluation.config import DATASET_CACHE, LIUM_API_KEY
 from evaluation.profile import EvaluationProfile, load_profile
 from evaluation.runner import LocalEvaluationReport, evaluate
-from shared.config import Settings, load_settings, read_environment
 from shared.datasets import RoundPlan
 
 
@@ -58,15 +58,13 @@ def unfinished(output_dir: Path) -> list[Path]:
     ]
 
 
-def execute(
-    profile: EvaluationProfile, settings: Settings, output: Path, api_key: str
-) -> LocalEvaluationReport:
+def execute(profile: EvaluationProfile, output: Path, api_key: str) -> LocalEvaluationReport:
     from evaluation.lium import evaluate_on_lium
 
     if profile.backend == "pod":
         return run_inline(
             profile.model_copy(update={"output_dir": output.with_suffix(".logs")}),
-            dataset_cache=settings.dataset_cache,
+            dataset_cache=DATASET_CACHE,
         )
 
     def interrupt(signum: int, frame: object) -> None:
@@ -76,7 +74,6 @@ def execute(
     previous = signal.signal(signal.SIGTERM, interrupt)
     try:
         return evaluate_on_lium(
-            settings,
             profile.target,
             profile.draft_head,
             output,
@@ -87,6 +84,8 @@ def execute(
             seed=profile.seed,
             port=profile.port,
             mode=profile.mode,
+            session_seconds=profile.session_seconds,
+            session_max_cost=profile.session_max_cost,
         )
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -101,21 +100,13 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         profile = load_profile(args.profile)
         if args.mode:
             profile = profile.model_copy(update={"mode": args.mode})
-        settings = load_settings("evaluation", args.env_file)
-        overrides = {
-            k: getattr(profile, k)
-            for k in ("session_seconds", "session_max_cost")
-            if getattr(profile, k) is not None
-        }
-        settings = settings.model_copy(update=overrides)
-        api_key = read_environment(args.env_file).get("LIUM_API_KEY", "")
+        api_key = LIUM_API_KEY
         if args.dry_run:
             if profile.backend != "lium":
                 parser.error("--dry-run requires a Lium profile")
             print(
                 json.dumps(
                     quote_evaluation(
-                        settings,
                         profile.target,
                         profile.draft_head,
                         api_key=api_key,
@@ -125,6 +116,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                         seed=profile.seed,
                         port=profile.port,
                         mode=profile.mode,
+                        session_seconds=profile.session_seconds,
+                        session_max_cost=profile.session_max_cost,
                     ),
                     indent=2,
                 )
@@ -133,7 +126,7 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         with locked(profile.output_dir / "evaluation"):
             pending = unfinished(profile.output_dir)
             if args.cleanup_only:
-                results = [cleanup_evaluation(settings, path, api_key=api_key) for path in pending]
+                results = [cleanup_evaluation(path, api_key=api_key) for path in pending]
                 print(
                     "Rental reconciliation complete" if all(results) else "Rental cleanup pending"
                 )
@@ -152,7 +145,7 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 output = Path(json.loads(pending[0].read_bytes())["output"])
             else:
                 output = profile.output_dir / profile.mode / f"{uuid.uuid4().hex}.json"
-            report = execute(profile, settings, output, api_key)
+            report = execute(profile, output, api_key)
             write_json(output, report.model_dump(mode="json"))
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
@@ -198,9 +191,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Standalone DFlash head and full comparison evaluation",
         epilog="Prepare datasets: prexon-evaluate prepare-datasets --config PATH --cache-dir PATH",
-    )
-    parser.add_argument(
-        "--env-file", default=".env", help="Rental credentials and operational settings"
     )
     parser.add_argument("--profile", type=Path, required=True, help="Local evaluation JSON profile")
     parser.add_argument(

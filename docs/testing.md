@@ -32,8 +32,11 @@ CI also checks installed entrypoints and empty-target configuration. Docker
 configuration can be checked without starting services:
 
 ```bash
-docker compose --env-file .env.example -f docker/compose.yaml config --quiet
+API_CONTAINER_USER="$(id -u):$(id -g)" docker compose --env-file .env.example -f docker/compose.yaml config --quiet
 ```
+
+Starting the API with `up` also needs the `runtime/intake-policy` and
+`runtime/api` directories.
 
 ## Explicit integration checks
 

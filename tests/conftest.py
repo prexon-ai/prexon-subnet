@@ -1,13 +1,74 @@
+import os
+import sys
 from contextlib import asynccontextmanager
 
 import pytest
 
-from shared.contracts import HardwareEvidence, Measurement
-from tests.factories import make_checkpoint
+# Tests never read the owner's .env: every key it may hold is blanked before any config
+# file is imported (the environment wins over .env, and an empty value means the default).
+ENV_KEYS = (
+    "PREXON_NETWORK",
+    "PREXON_NETUID",
+    "PREXON_WALLET_NAME",
+    "PREXON_WALLET_HOTKEY",
+    "PREXON_WALLET_PATH",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_SESSION_TOKEN",
+    "LIUM_API_KEY",
+    "LIUM_TEMPLATE_ID",
+    "LIUM_VOLUME_ID",
+    "SSH_PRIVATE_KEY",
+    "SSH_PUBLIC_KEY",
+)
+for key in ENV_KEYS:
+    os.environ[key] = ""
+
+PACKAGES = {"api", "evaluation", "miner", "shared", "validator"}
+CONFIGS = ("validator.config", "evaluation.config", "shared.config")
+
+
+@pytest.fixture
+def set_config(monkeypatch):
+    """Change config values in every module that imported them with `from ... import`."""
+
+    def apply(**values):
+        known = set().union(*(vars(__import__(name, fromlist=["_"])) for name in CONFIGS))
+        unknown = set(values) - known
+        assert not unknown, f"not a config value: {sorted(unknown)}"
+        for module in list(sys.modules.values()):
+            if (getattr(module, "__name__", None) or "").split(".")[0] not in PACKAGES:
+                continue
+            for name, value in values.items():
+                if name in vars(module):
+                    monkeypatch.setattr(module, name, value)
+
+    return apply
+
+
+@pytest.fixture(autouse=True)
+def local_config(set_config, tmp_path):
+    """Every test starts on local storage with runtime files in tmp: never the owner's
+    buckets, targets or this checkout's runtime/ folder."""
+    set_config(
+        TARGETS=[],
+        STATE_PATH=tmp_path / "state.sqlite",
+        ARTIFACT_ROOT=str(tmp_path / "artifacts"),
+        UPLOAD_STAGING_ROOT="",
+        PUBLIC_ARTIFACT_ROOT=str(tmp_path / "public"),
+        PUBLIC_ARTIFACT_BASE_URL="",
+        UPLOAD_POLICY_PATH=tmp_path / "intake-policy/upload-policy.json",
+        UPLOAD_STATE_PATH=tmp_path / "api/uploads.sqlite3",
+        DATASET_CACHE=tmp_path / "datasets",
+        SSH_KNOWN_HOSTS=tmp_path / "known_hosts",
+    )
 
 
 @pytest.fixture
 def pod(tmp_path, monkeypatch):
+    from shared.contracts import HardwareEvidence, Measurement
+    from tests.factories import make_checkpoint
+
     checkpoint = make_checkpoint(tmp_path / "head")
     snapshot = tmp_path / "target"
     snapshot.mkdir()

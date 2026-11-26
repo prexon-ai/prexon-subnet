@@ -15,8 +15,8 @@ from typing import Any, Literal
 import httpx
 
 from evaluation.process import terminate_process_group
-from shared.config import TargetConfig, Workload
 from shared.contracts import Measurement
+from shared.targets import TargetConfig, Workload
 
 Arm = Literal["target", "candidate", "public", "incumbent"]
 

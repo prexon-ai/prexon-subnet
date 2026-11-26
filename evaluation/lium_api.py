@@ -1,4 +1,4 @@
-"""Shared Lium REST requests; job orchestration stays in each role."""
+"""Lium REST requests for GPU rentals; job orchestration stays with each caller."""
 
 from __future__ import annotations
 
@@ -8,7 +8,8 @@ from typing import Any
 
 import httpx
 
-from shared.config import Settings, TargetConfig
+from evaluation.config import LIUM_BASE_URL, LIUM_TEMPLATE_ID, LIUM_VOLUME_ID, SSH_PUBLIC_KEY
+from shared.targets import TargetConfig
 
 # Pod states that cannot become a usable pod again (lower-cased Lium PodStatus values).
 FAILED_POD_STATUSES = frozenset(
@@ -40,19 +41,20 @@ class RentalRefused(RuntimeError):
 
 class LiumClient:
     def __init__(
-        self, settings: Settings, api_key: str, *, client: httpx.Client | None = None
+        self, api_key: str, max_cost: float, *, client: httpx.Client | None = None
     ) -> None:
-        self.settings = settings
+        # The spend cap differs: the validator's sessions and prexon-evaluate rounds.
+        self.max_cost = max_cost
         if not api_key:
             raise ValueError("LIUM_API_KEY is required for Lium provisioning")
         self.client = client or httpx.Client(
-            base_url=settings.lium_base_url.rstrip("/") + "/",
+            base_url=LIUM_BASE_URL.rstrip("/") + "/",
             headers={"X-API-Key": api_key},
             timeout=30,
         )
 
     def build_request(self, session: dict[str, Any], target: TargetConfig) -> dict[str, Any]:
-        template = target.lium_template_id or self.settings.lium_template_id
+        template = target.lium_template_id or LIUM_TEMPLATE_ID
         if not template:
             raise ValueError("Configure a Lium template for the pinned worker image")
         response = self.client.get(f"templates/{template}")
@@ -68,7 +70,7 @@ class LiumClient:
         request: dict[str, Any] = {
             "pod_name": f"prexon-{session['id']}",
             "template_id": template,
-            "user_public_key": self.settings.ssh_public_key.expanduser().read_text().strip(),
+            "user_public_key": SSH_PUBLIC_KEY.expanduser().read_text().strip(),
             "gpu_type": hardware.gpu_type,
             "gpu_count": hardware.gpu_count,
             "min_vram_gb": hardware.min_vram_gb,
@@ -77,15 +79,15 @@ class LiumClient:
             "min_disk_gb": hardware.min_disk_gb,
             "max_price_per_gpu_hour": min(
                 hardware.max_price_per_gpu_hour,
-                self.settings.session_max_cost / (hardware.gpu_count * hours),
+                self.max_cost / (hardware.gpu_count * hours),
             ),
             "termination_hours": hours,
             "enable_jupyter": False,
             "enable_backups": False,
             "skip_add_agent_ssh_key": True,
         }
-        if self.settings.lium_volume_id:
-            request["volume_id"] = self.settings.lium_volume_id
+        if LIUM_VOLUME_ID:
+            request["volume_id"] = LIUM_VOLUME_ID
         return request
 
     def quote(self, request: dict[str, Any]) -> dict[str, Any]:

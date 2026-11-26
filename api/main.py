@@ -7,12 +7,10 @@ import argparse
 from fastapi import FastAPI
 
 from api.uploads import UploadService, upload_routes
-from shared.config import Settings, load_settings
+from validator.config import API_HOST, API_PORT
 
 
-def create_app(
-    *, settings: Settings | None = None, upload_service: UploadService | None = None
-) -> FastAPI:
+def create_app(*, upload_service: UploadService | None = None) -> FastAPI:
     app = FastAPI(
         title="Prexon upload API",
         version="0.1.0",
@@ -20,8 +18,7 @@ def create_app(
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
     )
-    settings = settings or load_settings("api")
-    app.include_router(upload_routes(upload_service or UploadService(settings)), prefix="/api")
+    app.include_router(upload_routes(upload_service or UploadService()), prefix="/api")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -34,10 +31,9 @@ def main() -> None:
     import uvicorn
 
     parser = argparse.ArgumentParser(description="Prexon private upload API")
-    parser.add_argument("--env-file", default=".env")
+    parser.add_argument("--host", help="Override API_HOST, e.g. 0.0.0.0 in a container")
     args = parser.parse_args()
-    settings = load_settings("api", args.env_file)
-    uvicorn.run(create_app(settings=settings), host=settings.api_host, port=settings.api_port)
+    uvicorn.run(create_app(), host=args.host or API_HOST, port=API_PORT)
 
 
 if __name__ == "__main__":

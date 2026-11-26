@@ -11,7 +11,6 @@ from api.main import create_app
 from api.uploads import UploadService
 from miner.submit import submit
 from shared.artifacts import ArtifactStore
-from shared.config import Settings
 from shared.contracts import Commitment, DashboardSnapshot
 from shared.releases import public_release_key
 from shared.uploads import submission_key
@@ -21,7 +20,7 @@ from validator.chain import ChainSnapshot
 from validator.controller import Controller
 
 
-def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monkeypatch):
+def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monkeypatch, set_config):
     controller, state, canonical, chain, provider, target = setup_pipeline(tmp_path)
     hotkey = Keypair.create_from_uri("//Alice")
     now = int(time.time())
@@ -30,8 +29,9 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
     chain.current_owners = lambda: owners
     chain.scan = lambda *_: ChainSnapshot(block=100, owners=owners, commitments=chain.commitments)
     staging = ArtifactStore(str(tmp_path / "staging"))
-    settings = controller.settings.model_copy(update={"upload_staging_root": staging.root})
-    controller = Controller(settings, state, canonical, chain, provider)
+    # The validator reads the uploads bucket (local here); the API presigns into it.
+    monkeypatch.setattr("validator.submissions.UPLOAD_STAGING_ROOT", staging.root)
+    controller = Controller(controller.targets, state, canonical, chain, provider)
     controller.tick(now)
     # The candidate must arrive through staging; canonical storage has no candidate yet.
     for object_path in (tmp_path / "artifacts/objects").iterdir():
@@ -43,19 +43,11 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
             assert operation == "put_object"
             return "https://s3.hippius.com/staging/" + kwargs["Params"]["Key"]
 
-    api_settings = Settings(
-        role="api",
-        uploads_enabled=True,
-        upload_staging_root="s3://staging",
-        upload_state_path=tmp_path / "api/uploads.sqlite3",
-        upload_policy_path=settings.upload_policy_path,
-        public_artifact_root=settings.public_artifact_root,
-    )
+    set_config(UPLOADS_ENABLED=True)
+    monkeypatch.setattr("api.uploads.UPLOAD_STAGING_ROOT", "s3://staging")
     api = TestClient(
         create_app(
-            settings=api_settings,
             upload_service=UploadService(
-                api_settings,
                 store=ArtifactStore("s3://staging", s3_client=Presigner()),
                 clock=time.time,
             ),
@@ -79,11 +71,11 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
         uploaded.append(True)
         return httpx.Response(200)
 
-    def commit(_settings, artifact):
+    def commit(artifact, **_):
         assert uploaded == [True]
         chain.commitments = (
             Commitment(
-                netuid=settings.netuid,
+                netuid=0,
                 block=99,
                 block_hash="finalized",
                 hotkey=hotkey.ss58_address,
@@ -93,30 +85,22 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
             ),
         )
 
-    monkeypatch.setattr("miner.submit.wallet", lambda _: SimpleNamespace(hotkey=hotkey))
+    monkeypatch.setattr("miner.submit.wallet", lambda *_: SimpleNamespace(hotkey=hotkey))
     monkeypatch.setattr("miner.submit.commit_artifact", commit)
-    miner_settings = settings.model_copy(
-        update={
-            "role": "miner",
-            "chain": "bittensor",
-            "upload_api_url": "https://prexonai.com/api/v1",
-        }
-    )
     digest = submit(
-        miner_settings,
         tmp_path / "head.tar.gz",
+        netuid=0,
+        api_url="https://prexonai.com/api/v1",
         client=httpx.Client(transport=httpx.MockTransport(transport)),
     )
-    assert staging.exists(
-        submission_key(settings.network, settings.netuid, hotkey.ss58_address, digest)
-    )
+    assert staging.exists(submission_key("finney", 0, hotkey.ss58_address, digest))
     assert not canonical.exists(f"objects/{digest}")
     controller.tick(now + 1)
     assert state.ready_count(target.identity) == 1
     assert state.similarity_verdict(chain.commitments[0].identity)["outcome"] == "pass"
     assert canonical.exists(f"objects/{digest}")
     # Nothing about the head is published before it has won.
-    public = ArtifactStore(settings.public_artifact_root)
+    public = controller.public_store
     pending = DashboardSnapshot.model_validate_json(public.read_bytes("dashboard/snapshot.json"))
     assert (pending.submissions, pending.releases) == ((), ())
     assert provider.rents == []

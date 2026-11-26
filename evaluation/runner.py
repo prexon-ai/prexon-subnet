@@ -17,9 +17,9 @@ from evaluation.profile import EvaluationMode
 from evaluation.scoring import score_benchmark
 from evaluation.sglang import Arm
 from shared.checkpoints import validate_checkpoint
-from shared.config import Digest, FrozenModel, Positive, TargetConfig
 from shared.contracts import BenchmarkEvidence, Decision, FileDigest
 from shared.datasets import RoundPlan
+from shared.targets import Digest, FrozenModel, Positive, TargetConfig
 
 
 class HeadMetrics(FrozenModel):

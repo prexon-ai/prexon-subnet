@@ -15,7 +15,7 @@ from tests.factories import make_checkpoint, provenance, target
 def test_training_pins_snapshot_and_exports_hf_checkpoint(tmp_path, monkeypatch, direct):
     import yaml
 
-    from miner.config import MinerTarget
+    from miner.target import MinerTarget
 
     recipe = tmp_path / "recipe.yaml"
     draft = tmp_path / "draft.json"
@@ -141,19 +141,43 @@ def test_package_accepts_identity_flags_without_loading_server_dotenv(tmp_path, 
 
 
 @pytest.mark.parametrize("before_command", [True, False])
-def test_submit_flags_override_an_optional_miner_env(tmp_path, monkeypatch, before_command):
-    env_file = tmp_path / "miner.env"
-    env_file.write_text("PREXON_NETUID=invalid-but-overridden\n")
+def test_submit_flags_work_before_or_after_the_command(tmp_path, monkeypatch, before_command):
     calls = []
     monkeypatch.setattr(
         "miner.submit.submit", lambda *args, **kwargs: calls.append((args, kwargs)) or "a" * 64
     )
-    options = ["--env-file", str(env_file), "--netuid", "17"]
+    options = ["--netuid", "17", "--network", "test"]
     command = ["submit", str(tmp_path / "head.tar.gz"), "--upload-only"]
     monkeypatch.setattr(
         sys, "argv", ["prexon-miner", *(options + command if before_command else command + options)]
     )
     main()
-    settings, package = calls[0][0]
-    assert settings.netuid == 17
-    assert calls[0][1] == {"publish": False}
+    (package,), kwargs = calls[0]
+    assert package == tmp_path / "head.tar.gz"
+    assert (kwargs["netuid"], kwargs["network"], kwargs["publish"]) == (17, "test", False)
+
+
+def test_miner_reads_no_env_file_or_prexon_environment(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PREXON_NETUID", "99")
+    monkeypatch.setenv("PREXON_NETWORK", "test")
+    calls = []
+    monkeypatch.setattr(
+        "miner.submit.submit", lambda *args, **kwargs: calls.append((args, kwargs)) or "a" * 64
+    )
+    monkeypatch.setattr(sys, "argv", ["prexon-miner", "submit", str(tmp_path / "head.tar.gz")])
+    main()
+    assert (calls[0][1]["netuid"], calls[0][1]["network"]) == (0, "finney")
+    monkeypatch.setattr(sys, "argv", ["prexon-miner", "targets", "--env-file", ".env"])
+    with pytest.raises(SystemExit) as stop:
+        main()
+    assert stop.value.code == 2
+    assert "unrecognized arguments: --env-file" in capsys.readouterr().err
+
+
+def test_miner_network_is_finney_or_test(tmp_path, monkeypatch, capsys):
+    command = ["prexon-miner", "submit", str(tmp_path / "head.tar.gz"), "--upload-only"]
+    monkeypatch.setattr(sys, "argv", [*command, "--network", "local"])
+    with pytest.raises(SystemExit) as stop:
+        main()
+    assert stop.value.code == 2
+    assert "argument --network: invalid choice: 'local'" in capsys.readouterr().err

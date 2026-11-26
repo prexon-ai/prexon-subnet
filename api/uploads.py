@@ -12,19 +12,30 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from shared.artifacts import ArtifactStore
-from shared.config import Settings, read_environment
+from shared.config import UPLOAD_MAX_BYTES
 from shared.uploads import UploadGrant, UploadPolicy, UploadRequest, submission_key
+from validator.config import (
+    S3_ACCESS_KEY_ID,
+    S3_SECRET_ACCESS_KEY,
+    S3_SESSION_TOKEN,
+    UPLOAD_MAX_REQUESTS_PER_HOUR,
+    UPLOAD_POLICY_MAX_AGE_SECONDS,
+    UPLOAD_POLICY_PATH,
+    UPLOAD_REQUEST_MAX_AGE_SECONDS,
+    UPLOAD_STAGING_ROOT,
+    UPLOAD_STATE_PATH,
+    UPLOAD_URL_TTL_SECONDS,
+    UPLOADS_ENABLED,
+)
 
 
 class UploadService:
     def __init__(
         self,
-        settings: Settings,
         *,
         store: ArtifactStore | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        self.settings = settings
         self.store = store
         self.clock = clock
 
@@ -35,9 +46,9 @@ class UploadService:
         )
 
     def _check_backend(self) -> None:
-        parsed = urlsplit(self.settings.upload_staging_root)
+        parsed = urlsplit(UPLOAD_STAGING_ROOT)
         if (
-            not self.settings.uploads_enabled
+            not UPLOADS_ENABLED
             or parsed.scheme != "s3"
             or not parsed.netloc
             or parsed.username
@@ -51,8 +62,10 @@ class UploadService:
     def _storage(self) -> ArtifactStore:
         if self.store is None:
             self.store = ArtifactStore(
-                self.settings.upload_staging_root,
-                environment=read_environment(self.settings.env_file),
+                UPLOAD_STAGING_ROOT,
+                access_key=S3_ACCESS_KEY_ID,
+                secret_key=S3_SECRET_ACCESS_KEY,
+                session_token=S3_SESSION_TOKEN,
             )
         if not self.store.bucket:
             raise self.unavailable()
@@ -60,14 +73,14 @@ class UploadService:
 
     def _policy(self, now: float) -> UploadPolicy:
         try:
-            with self.settings.upload_policy_path.open("rb") as stream:
+            with UPLOAD_POLICY_PATH.open("rb") as stream:
                 raw = stream.read(4 * 1024**2 + 1)
             if len(raw) > 4 * 1024**2:
                 raise ValueError("Policy exceeds size limit")
             policy = UploadPolicy.model_validate_json(raw)
         except (OSError, ValueError):
             raise self.unavailable() from None
-        if not 0 <= now - policy.updated_at <= self.settings.upload_policy_max_age_seconds:
+        if not 0 <= now - policy.updated_at <= UPLOAD_POLICY_MAX_AGE_SECONDS:
             raise self.unavailable()
         return policy
 
@@ -89,9 +102,9 @@ class UploadService:
         )
         if target is None:
             raise HTTPException(403, "Competition does not accept uploads")
-        if request.size > min(target.max_package_bytes, self.settings.upload_max_bytes):
+        if request.size > min(target.max_package_bytes, UPLOAD_MAX_BYTES):
             raise HTTPException(413, "Package exceeds upload size limit")
-        if not 0 <= now - request.timestamp <= self.settings.upload_request_max_age_seconds:
+        if not 0 <= now - request.timestamp <= UPLOAD_REQUEST_MAX_AGE_SECONDS:
             raise HTTPException(401, "Upload authorization timestamp is stale or in the future")
         try:
             from bittensor_wallet import Keypair
@@ -108,8 +121,8 @@ class UploadService:
         # A failed local presign rolls the reservation back, allowing an honest retry.
         connection: sqlite3.Connection | None = None
         try:
-            self.settings.upload_state_path.parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(self.settings.upload_state_path, timeout=10)
+            UPLOAD_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            connection = sqlite3.connect(UPLOAD_STATE_PATH, timeout=10)
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS upload_requests ("
                 "hotkey TEXT NOT NULL, nonce TEXT NOT NULL, issued_at REAL NOT NULL, "
@@ -130,7 +143,7 @@ class UploadService:
                 "WHERE hotkey=? AND issued_at>?",
                 (request.hotkey, now - 3600),
             ).fetchone()
-            if count >= self.settings.upload_max_requests_per_hour:
+            if count >= UPLOAD_MAX_REQUESTS_PER_HOUR:
                 retry = max(1, int(oldest + 3600 - now) + 1)
                 raise HTTPException(
                     429, "Hourly upload quota exceeded", headers={"Retry-After": str(retry)}
@@ -139,7 +152,7 @@ class UploadService:
             key = store._key(
                 submission_key(request.network, request.netuid, request.hotkey, request.artifact)
             )
-            ttl = self.settings.upload_url_ttl_seconds
+            ttl = UPLOAD_URL_TTL_SECONDS
             url = store.client.generate_presigned_url(
                 "put_object",
                 Params={

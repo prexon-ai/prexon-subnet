@@ -17,15 +17,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from evaluation.config import DATASET_CACHE, SESSION_MAX_COST, SESSION_SECONDS, SSH_PRIVATE_KEY
 from evaluation.datasets.sampling import select_round, validate_plan
+from evaluation.lium_api import FAILED_POD_STATUSES, LiumClient, RentalRefused
 from evaluation.profile import EvaluationMode
 from evaluation.runner import LocalEvaluationReport, summarize_report
+from evaluation.ssh import SshTransport
 from shared.checkpoints import validate_checkpoint
-from shared.config import Settings, TargetConfig
 from shared.contracts import Decision, FileDigest
 from shared.datasets import RoundPlan
-from shared.lium import FAILED_POD_STATUSES, LiumClient, RentalRefused
-from shared.ssh import SshTransport
+from shared.targets import TargetConfig
 
 PYTHON = "/opt/prexon/.venv/bin/python"
 
@@ -106,7 +107,6 @@ def inputs(
 
 
 def quote_evaluation(
-    settings: Settings,
     target: TargetConfig,
     checkpoint: Path,
     *,
@@ -117,6 +117,8 @@ def quote_evaluation(
     port: int = 30000,
     remote_target_path: Path | None = None,
     mode: EvaluationMode = "full",
+    session_seconds: int | None = None,
+    session_max_cost: float | None = None,
 ) -> dict[str, Any]:
     inputs(
         target,
@@ -127,12 +129,16 @@ def quote_evaluation(
         port,
         remote_target_path,
         mode,
-        dataset_cache=settings.dataset_cache,
+        dataset_cache=DATASET_CACHE,
     )
-    provider = LiumClient(settings, api_key)
+    provider = LiumClient(api_key, session_max_cost or SESSION_MAX_COST)
     now = time.time()
     request = provider.build_request(
-        {"id": uuid.uuid4().hex, "started_at": now, "deadline": now + settings.session_seconds},
+        {
+            "id": uuid.uuid4().hex,
+            "started_at": now,
+            "deadline": now + (session_seconds or SESSION_SECONDS),
+        },
         target,
     )
     return provider.quote(request)
@@ -172,10 +178,10 @@ def _cleanup(provider: LiumClient, state: dict[str, Any], state_path: Path) -> b
     return state["cleanup"] != "pending"
 
 
-def cleanup_evaluation(settings: Settings, state_path: Path, *, api_key: str) -> bool:
+def cleanup_evaluation(state_path: Path, *, api_key: str) -> bool:
     with locked(state_path):
         state = json.loads(state_path.read_bytes())
-        provider = LiumClient(settings, api_key)
+        provider = LiumClient(api_key, SESSION_MAX_COST)
         success = _cleanup(provider, state, state_path)
         output = Path(state["output"])
         if output.exists():
@@ -239,7 +245,6 @@ def _validate_report(report: LocalEvaluationReport, state: dict[str, Any]) -> No
 
 
 def evaluate_on_lium(
-    settings: Settings,
     target: TargetConfig,
     checkpoint: Path,
     output: Path,
@@ -251,11 +256,15 @@ def evaluate_on_lium(
     port: int = 30000,
     remote_target_path: Path | None = None,
     mode: EvaluationMode = "full",
+    session_seconds: int | None = None,
+    session_max_cost: float | None = None,
 ) -> LocalEvaluationReport:
-    if not settings.ssh_private_key.expanduser().is_file() or not shutil.which("ssh"):
+    if not SSH_PRIVATE_KEY.expanduser().is_file() or not shutil.which("ssh"):
         raise ValueError("Configure an existing SSH private key and install OpenSSH before renting")
+    seconds = session_seconds or SESSION_SECONDS
+    max_cost = session_max_cost or SESSION_MAX_COST
     state_path = output.with_suffix(".lium.json")
-    provider = LiumClient(settings, api_key)
+    provider = LiumClient(api_key, max_cost)
     with locked(state_path):
         saved = json.loads(state_path.read_bytes()) if state_path.exists() else None
         frozen_plan = None
@@ -270,7 +279,7 @@ def evaluate_on_lium(
             port,
             remote_target_path,
             mode,
-            dataset_cache=settings.dataset_cache,
+            dataset_cache=DATASET_CACHE,
             prepared_round=frozen_plan,
         )
         signature = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
@@ -301,8 +310,8 @@ def evaluate_on_lium(
                 "inputs": request,
                 "output": str(output.resolve()),
                 "started_at": now,
-                "deadline": now + settings.session_seconds,
-                "max_cost": settings.session_max_cost,
+                "deadline": now + seconds,
+                "max_cost": max_cost,
                 "phase": "active",
                 "rent_attempted": False,
                 "pod_id": None,
@@ -399,7 +408,7 @@ def evaluate_on_lium(
                     ):
                         break
                     time.sleep(1)
-                transport = SshTransport(settings, pod["ssh_connect_cmd"], tick)
+                transport = SshTransport(pod["ssh_connect_cmd"], tick)
 
                 code = transport.run(
                     [*command("upload"), "--digest", hashlib.sha256(payload).hexdigest()],

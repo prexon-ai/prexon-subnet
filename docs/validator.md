@@ -3,7 +3,7 @@
 The validator is an always-on CPU controller. It discovers chain commitments,
 checks candidates, rents temporary GPUs, evaluates improvements, and publishes
 emission weights. It publishes the dashboard's data to public storage. The
-upload API runs alongside it with the same `.env`.
+upload API runs alongside it with the same `.env` and `validator/config.py`.
 
 ## Configure the controller
 
@@ -14,23 +14,36 @@ mkdir -p profiles
 cp docs/examples/profile.json profiles/model-1.json
 ```
 
-Leave unused model IDs empty. One enabled target receives allocation 100; two
+`.env` has two sections: Validator (`PREXON_NETWORK`, `finney` or `test`,
+`PREXON_NETUID`, the wallet and the S3 key) and Evaluation (the Lium account and SSH
+key, used by GPU rentals). Every other setting is a plain value in
+`validator/config.py` (validator and upload API) or `evaluation/config.py` (GPU
+rentals), commented Python files you edit in place. Values are not validated at
+startup; `uv run pytest tests/validator/test_config.py` checks the committed values.
+Two safety checks remain: enabled targets need `PREXON_NETUID` and the three Hippius
+buckets. Configure each
+target as an entry of its `TARGETS` list and leave unused model IDs empty. One enabled target receives allocation 100; two
 allocations must sum to 100. Each target profile pins its revision, engine/image,
 hardware, workloads, policy, and optional public reference. A useful public
 reference is `{"artifact":"PACKAGE_SHA256","method":"dflash2"}`; absent references
 contribute 1.0 to the winning threshold.
 
-Prepare the [dataset pool](datasets.md), replace placeholder digests, and configure
-the subnet netuid, wallet, and [Hippius/Lium deployment](docker.md). Production
+Prepare the [dataset pool](datasets.md), replace placeholder digests, and set
+`PREXON_NETUID` and the wallet in `.env`, and configure the [Hippius/Lium deployment](docker.md). Production
 requires separate uploads, private, and public buckets plus a stable public
-winner URL. Store S3 and rental credentials in `.env`. The upload API receives
-selected settings in Compose; it does not mount the validator database or wallet
-files.
+winner URL. The upload API container mounts `validator/config.py` and receives only
+the S3 keys; it does not mount the validator database or wallet files.
 
-Keep `PREXON_STATE_PATH` on persistent local storage. A process lock permits one
+Keep `STATE_PATH` on persistent local storage. A process lock permits one
 controller per state file. Use separate state for different chain/subnet contexts.
 Disabling all targets retains an initialized chain connection so unused emissions
 can be burned; a fresh empty installation needs no chain credentials.
+
+**Upgrading from an all-in-one `.env`.** Old keys in `.env` are ignored, not
+reported. Keep only the keys of `.env.example`, move every other value to its constant
+in the config files (`PREXON_MODEL_{1,2}_*` become `TARGETS` entries) and run the
+config tests. There is no file chain: the validator always reads the Bittensor
+network in `PREXON_NETWORK`.
 
 ## Qualify and publish a target
 
@@ -76,11 +89,21 @@ software cannot verify the truthfulness of its human-review description.
 
 ## Start and monitor
 
+Run the validator with [pm2](https://pm2.keymetrics.io/) from the repository
+checkout, whose `.venv` the command uses. `validator/config.py` anchors its paths
+and the default `.env` to the checkout:
+
 ```bash
-uv run prexon-validator
-# In a second terminal:
-uv run prexon-api
+pm2 start .venv/bin/prexon-validator --name prexon-validator --interpreter none --kill-timeout 120000
+pm2 save
+pm2 logs prexon-validator
 ```
+
+`--kill-timeout 120000` gives the validator two minutes to stop its GPU sessions
+and release the Lium rentals when pm2 stops or restarts it; pm2's default is 1.6
+seconds. Run `pm2 startup` once so pm2 restarts the validator after a reboot, and
+consider `pm2-logrotate` for log rotation. For a foreground run, use
+`uv run prexon-validator`. Start the upload API with [Docker](docker.md).
 
 `--once` performs one synchronous controller tick. Continuous mode uses bounded
 background admission/publication workers; the controller alone finalizes SQLite.
@@ -106,15 +129,15 @@ malformed packages are rejected before GPU rental.
 
 ## Scheduling and persistence
 
-Sessions start at `PREXON_EARLY_QUEUE_DEPTH=10` ready candidates or
-`PREXON_SCHEDULE_SECONDS=21600` seconds since the oldest unevaluated ready
+Sessions start at `EARLY_QUEUE_DEPTH = 10` ready candidates or
+`SCHEDULE_SECONDS = 21600` seconds since the oldest unevaluated ready
 commitment. Chain time is used when available; first discovery is the fallback.
 Retries and restarts preserve age. Session cost/duration bounds are independent
 of this trigger.
 
 An evaluation that ends without a verdict counts as a failed attempt: an unusable
 result, or a job that used its whole time budget without reporting. After
-`PREXON_MAX_EVALUATION_ATTEMPTS=3` failed attempts the submission is set aside as
+`MAX_EVALUATION_ATTEMPTS = 3` failed attempts the submission is set aside as
 `stalled`. That is not a loss; the submission simply stops holding up the queue.
 Jobs cut short by a session ending, a pod failure, or a controller shutdown do not
 count. After fixing an infrastructure problem, stop the controller and run
@@ -122,7 +145,7 @@ count. After fixing an infrastructure problem, stop the controller and run
 set of attempts.
 
 When a session ends without any verdict, the next rental for that target waits
-`PREXON_SESSION_RETRY_SECONDS=300`. The wait doubles after each further rental
+`SESSION_RETRY_SECONDS = 300`. The wait doubles after each further rental
 that produced no verdict, up to one hour, and clears once a session reaches a
 verdict. Refused rentals cost nothing and are retried at the first wait.
 
@@ -159,6 +182,7 @@ private. The snapshot and history files are written to public storage under
 `dashboard/`, where the website reads them: when they change, and at least every
 five minutes for the two that carry the time. A failed upload is retried.
 
-For development, `PREXON_CHAIN=file` and `PREXON_PROVIDER=local` use explicit chain
-fixtures and local storage. Real evaluation still requires a compatible GPU
-runtime. See [testing](testing.md) and [standalone evaluation](evaluation.md).
+There is no local chain. Enabled targets always mean the Bittensor network in
+`PREXON_NETWORK` and the three Hippius stores, so try changes on the testnet
+(`PREXON_NETWORK=test`) first; the tests drive the controller with fixtures instead.
+Real evaluation still requires a compatible GPU runtime. See [testing](testing.md) and [standalone evaluation](evaluation.md).

@@ -8,7 +8,6 @@ from bittensor_wallet import Keypair
 
 from miner.submit import submit
 from shared.artifacts import package_checkpoint
-from shared.config import Settings
 from shared.uploads import UploadRequest
 from tests.factories import make_checkpoint, provenance, target
 
@@ -26,24 +25,23 @@ def submission(tmp_path, monkeypatch):
         competition_id=configured.identity,
         provenance=provenance(),
     )
-    settings = Settings(
-        role="miner",
-        targets=(configured,),
-        upload_api_url="https://uploads.example.org/api/v1",
-        network="finney",
-        netuid=17,
-    )
+    options = {
+        "targets": (configured,),
+        "api_url": "https://uploads.example.org/api/v1",
+        "network": "finney",
+        "netuid": 17,
+    }
     signer = Keypair.create_from_uri("//Alice")
     # Wallet access is the signing boundary; signatures themselves are real.
     monkeypatch.setattr(
-        "miner.submit.wallet", lambda _: SimpleNamespace(hotkey=signer), raising=False
+        "miner.submit.wallet", lambda *_: SimpleNamespace(hotkey=signer), raising=False
     )
     calls = []
     requests = []
     grant_changes = {}
     state = SimpleNamespace(
         package=package,
-        settings=settings,
+        options=options,
         signer=signer,
         calls=calls,
         requests=requests,
@@ -62,8 +60,8 @@ def submission(tmp_path, monkeypatch):
             assert str(request.url) == state.authorize_url
             authorization = UploadRequest.model_validate_json(request.content)
             assert authorization.hotkey == signer.ss58_address
-            assert authorization.network == settings.network
-            assert authorization.netuid == settings.netuid
+            assert authorization.network == options["network"]
+            assert authorization.netuid == options["netuid"]
             assert authorization.competition_id == configured.identity
             assert authorization.size == len(state.original)
             assert authorization.artifact == hashlib.sha256(state.original).hexdigest()
@@ -95,7 +93,7 @@ def submission(tmp_path, monkeypatch):
         assert state.uploaded == state.original
         return httpx.Response(state.put_status)
 
-    def commit(settings, digest):
+    def commit(digest, **_):
         calls.append("commit")
         assert state.uploaded == state.original
         assert digest == hashlib.sha256(state.uploaded).hexdigest()
@@ -109,26 +107,26 @@ def submission(tmp_path, monkeypatch):
 
 
 def test_upload_is_signed_and_completed_before_chain_commit(submission):
-    digest = submit(submission.settings, submission.package, client=submission.client)
+    digest = submit(submission.package, **submission.options, client=submission.client)
     assert digest == hashlib.sha256(submission.original).hexdigest()
     assert submission.calls == ["authorize", "upload", "commit"]
 
 
 def test_upload_only_signs_authorization_without_chain_transaction(submission):
-    submit(submission.settings, submission.package, publish=False, client=submission.client)
+    submit(submission.package, **submission.options, publish=False, client=submission.client)
     assert submission.calls == ["authorize", "upload"]
 
 
 def test_manifest_is_sufficient_to_submit_without_configured_targets(submission):
-    settings = submission.settings.model_copy(update={"targets": ()})
-    digest = submit(settings, submission.package, client=submission.client)
+    options = {**submission.options, "targets": ()}
+    digest = submit(submission.package, **options, client=submission.client)
     assert digest == hashlib.sha256(submission.original).hexdigest()
     assert submission.calls == ["authorize", "upload", "commit"]
 
 
 def test_frozen_validated_bytes_survive_training_overwrite(submission):
     submission.mutate_on_authorization = True
-    digest = submit(submission.settings, submission.package, client=submission.client)
+    digest = submit(submission.package, **submission.options, client=submission.client)
     assert digest == hashlib.sha256(submission.original).hexdigest()
     assert submission.package.read_bytes() != submission.uploaded
     assert submission.calls == ["authorize", "upload", "commit"]
@@ -138,7 +136,7 @@ def test_frozen_validated_bytes_survive_training_overwrite(submission):
 def test_failed_or_redirected_put_never_commits_or_exposes_capability(submission, status):
     submission.put_status = status
     with pytest.raises(RuntimeError) as exc:
-        submit(submission.settings, submission.package, client=submission.client)
+        submit(submission.package, **submission.options, client=submission.client)
     assert "capability" not in str(exc.value)
     assert "private.example.org" not in str(exc.value)
     assert submission.calls == ["authorize", "upload"]
@@ -147,7 +145,7 @@ def test_failed_or_redirected_put_never_commits_or_exposes_capability(submission
 def test_failed_chain_submission_leaves_uploaded_artifact_available_for_retry(submission):
     submission.reject_commit = True
     with pytest.raises(RuntimeError, match="chain rejected"):
-        submit(submission.settings, submission.package, client=submission.client)
+        submit(submission.package, **submission.options, client=submission.client)
     assert submission.calls == ["authorize", "upload", "commit"]
     assert submission.uploaded == submission.package.read_bytes()
 
@@ -165,9 +163,9 @@ def test_failed_chain_submission_leaves_uploaded_artifact_available_for_retry(su
     ],
 )
 def test_missing_or_insecure_remote_api_is_rejected_before_network(submission, url):
-    settings = submission.settings.model_copy(update={"upload_api_url": url})
+    options = {**submission.options, "api_url": url}
     with pytest.raises(ValueError, match="upload API"):
-        submit(settings, submission.package, client=submission.client)
+        submit(submission.package, **options, client=submission.client)
     assert submission.calls == []
 
 
@@ -183,7 +181,7 @@ def test_missing_or_insecure_remote_api_is_rejected_before_network(submission, u
 def test_invalid_grant_never_uploads_or_commits(submission, grant_change):
     submission.grant_changes.update(grant_change)
     with pytest.raises(RuntimeError, match="upload"):
-        submit(submission.settings, submission.package, client=submission.client)
+        submit(submission.package, **submission.options, client=submission.client)
     assert submission.calls == ["authorize"]
 
 
@@ -197,7 +195,7 @@ def test_missing_or_different_competition_binding_never_uploads_or_commits(submi
         headers["x-amz-meta-prexon-competition-id"] = competition
     submission.grant_changes["headers"] = headers
     with pytest.raises(RuntimeError, match="upload"):
-        submit(submission.settings, submission.package, client=submission.client)
+        submit(submission.package, **submission.options, client=submission.client)
     assert submission.calls == ["authorize"]
 
 
@@ -207,23 +205,21 @@ def test_invalid_package_is_rejected_before_wallet_or_authorization(
 ):
     submission.package.write_bytes(b"invalid tarball")
 
-    def forbidden_wallet(settings):
+    def forbidden_wallet(*_):
         raise AssertionError("Invalid archives must not open the wallet")
 
     monkeypatch.setattr("miner.submit.wallet", forbidden_wallet)
-    settings = submission.settings
+    options = submission.options
     if not configured_targets:
-        settings = settings.model_copy(update={"targets": ()})
+        options = {**options, "targets": ()}
     with pytest.raises((ValueError, OSError)):
-        submit(settings, submission.package, client=submission.client)
+        submit(submission.package, **options, client=submission.client)
     assert submission.calls == []
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
 def test_explicit_loopback_api_supports_local_development(submission, host):
-    settings = submission.settings.model_copy(
-        update={"upload_api_url": f"http://{host}:8000/api/v1/"}
-    )
+    options = {**submission.options, "api_url": f"http://{host}:8000/api/v1/"}
 
     def transport(request):
         assert str(request.url) == f"http://{host}:8000/api/v1/uploads"
@@ -231,7 +227,7 @@ def test_explicit_loopback_api_supports_local_development(submission, host):
 
     with httpx.Client(transport=httpx.MockTransport(transport)) as client:
         with pytest.raises(RuntimeError, match="upload"):
-            submit(settings, submission.package, publish=False, client=client)
+            submit(submission.package, **options, publish=False, client=client)
     assert submission.calls == []
 
 
@@ -243,22 +239,24 @@ def test_explicit_checkpoint_bound_rejects_oversized_valid_checkpoint(submission
     package_checkpoint(
         head,
         submission.package,
-        target_id=submission.settings.targets[0].model_id,
-        target_revision=submission.settings.targets[0].revision,
-        competition_id=submission.settings.targets[0].identity,
+        target_id=submission.options["targets"][0].model_id,
+        target_revision=submission.options["targets"][0].revision,
+        competition_id=submission.options["targets"][0].identity,
         provenance=provenance(),
     )
-    settings = submission.settings.model_copy(update={"targets": ()})
+    options = {**submission.options, "targets": ()}
     with pytest.raises(ValueError, match="size limit"):
-        submit(settings, submission.package, max_checkpoint_bytes=1024, client=submission.client)
+        submit(submission.package, **options, max_checkpoint_bytes=1024, client=submission.client)
     assert submission.calls == []
 
 
 def test_configured_profile_match_still_required_with_explicit_checkpoint_bound(submission):
-    configured = submission.settings.targets[0].model_copy(update={"revision": "another-revision"})
-    settings = submission.settings.model_copy(update={"targets": (configured,)})
+    configured = submission.options["targets"][0].model_copy(
+        update={"revision": "another-revision"}
+    )
+    options = {**submission.options, "targets": (configured,)}
     with pytest.raises(ValueError, match="configured target"):
-        submit(settings, submission.package, max_checkpoint_bytes=1024, client=submission.client)
+        submit(submission.package, **options, max_checkpoint_bytes=1024, client=submission.client)
     assert submission.calls == []
 
 
@@ -266,7 +264,7 @@ def test_http_client_logging_does_not_expose_upload_capability(submission, caplo
     import logging
 
     with caplog.at_level(logging.INFO, logger="httpx"):
-        submit(submission.settings, submission.package, client=submission.client)
+        submit(submission.package, **submission.options, client=submission.client)
         logging.getLogger("httpx").info("normal requests remain visible")
     assert "normal requests remain visible" in caplog.text
     assert "capability" not in caplog.text

@@ -17,9 +17,9 @@ from typing import Literal
 from evaluation.cache import stage_target_async
 from evaluation.datasets.sampling import materialize, select_round
 from evaluation.sglang import Arm, SGLangClient, launch_server
-from shared.config import TargetConfig
 from shared.contracts import BenchmarkEvidence, ExecutionTimings, HardwareEvidence, Measurement
 from shared.datasets import DatasetEvidence, RoundPlan
+from shared.targets import TargetConfig
 
 
 def hardware_evidence(tensor_parallel_size: int) -> HardwareEvidence:
@@ -113,7 +113,7 @@ async def measure_configurations(
         if target.datasets is not None:
             plan = prepared_round or select_round(
                 target,
-                dataset_cache or Path(os.environ.get("PREXON_DATASET_CACHE", "runtime/datasets")),
+                dataset_cache or Path("runtime/datasets"),
                 seed,
             )
             measured_target = materialize(target, plan, seed)

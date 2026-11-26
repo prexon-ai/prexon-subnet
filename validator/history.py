@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 from shared.artifacts import ArtifactStore
-from shared.config import TargetConfig
 from shared.contracts import (
     Commitment,
     Decision,
@@ -16,6 +15,7 @@ from shared.contracts import (
     ModelSummary,
     QueuedSubmission,
 )
+from shared.targets import TargetConfig
 from validator.competition import reward_shares
 from validator.public_files import publish_file
 from validator.state import State, target_key

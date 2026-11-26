@@ -6,14 +6,15 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY shared ./shared
 COPY evaluation/__init__.py ./evaluation/__init__.py
 COPY api ./api
-COPY validator/__init__.py ./validator/__init__.py
+COPY validator/__init__.py validator/config.py ./validator/
 COPY miner/__init__.py ./miner/__init__.py
+# Settings come from validator/config.py (Compose mounts the checkout's copy); its paths
+# are anchored to /app, so runtime files live under /app/runtime.
 RUN uv sync --frozen --no-dev --extra api \
-    && mkdir -p /data/api /data/intake-policy \
-    && chown -R prexon:prexon /data
-ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PREXON_API_HOST=0.0.0.0 \
-    PREXON_UPLOAD_POLICY_PATH=/data/intake-policy/upload-policy.json \
-    PREXON_UPLOAD_STATE_PATH=/data/api/uploads.sqlite3
+    && mkdir -p /app/runtime/api /app/runtime/intake-policy \
+    && chown -R prexon:prexon /app/runtime
+ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER prexon
-EXPOSE 8000
+EXPOSE 8080
 ENTRYPOINT ["prexon-api"]
+CMD ["--host", "0.0.0.0"]

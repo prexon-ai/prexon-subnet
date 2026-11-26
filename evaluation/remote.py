@@ -17,9 +17,9 @@ from typing import BinaryIO
 from evaluation.datasets.sampling import validate_plan
 from evaluation.profile import EvaluationProfile
 from shared.checkpoints import validate_checkpoint
-from shared.config import TargetConfig
 from shared.contracts import FileDigest
 from shared.datasets import RoundPlan
+from shared.targets import TargetConfig
 
 
 def install(root: Path, archive: BinaryIO, expected_digest: str) -> None:

@@ -34,22 +34,26 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync --frozen --extra validator --extra api
-cp .env.example .env
+cp .env.example .env  # then fill in the netuid, wallet and Hippius key
 uv run prexon-validator --check-config
 uv run prexon-validator --once
 uv run prexon-api
 ```
 
-Both target slots are disabled by default. This writes an idle dashboard under
-`runtime/public/` without chain access, storage credentials, or a GPU. The local
-upload API is `http://127.0.0.1:8000/api/v1`; interactive documentation is at
+Both target slots are disabled by default. `--once` then publishes an idle dashboard
+to the public bucket named in `validator/config.py` without chain access or a GPU; it
+needs the Hippius key in `.env`. To try it without Hippius, set `ARTIFACT_ROOT` and
+`PUBLIC_ARTIFACT_ROOT` to local directories and `UPLOAD_STAGING_ROOT = ""`. The local
+upload API is `http://127.0.0.1:8080/api/v1`; interactive documentation is at
 `/api/docs`. It only authorizes miners' uploads and serves no data.
 
-For continuous operation, run `uv run prexon-validator` in a separate terminal.
-The validator and upload API share one `.env` on the same machine. Configure
-targets, storage, chain credentials, and a qualified worker image using the
-[validator guide](docs/validator.md). [Docker deployment](docs/docker.md) runs
-both CPU services and documents the `https://prexonai.com/api/v1` routing.
+For continuous operation, run the validator under pm2 as described in the
+[validator guide](docs/validator.md). `.env` holds the secrets in two sections:
+Validator (network, netuid, wallet, S3 key) and Evaluation (Lium account, SSH key). Every
+other setting is a plain value in `validator/config.py` (validator and upload API) or
+`evaluation/config.py` (GPU rentals), and tests check the committed values. Configure targets, storage, the chain, and a qualified worker image using
+the same guide. [Docker deployment](docs/docker.md)
+runs the upload API and documents the `https://prexonai.com/api/v1` routing.
 
 ## Miner workflow
 
@@ -72,8 +76,8 @@ uv run prexon-miner submit head.tar.gz \
   --netuid "$NETUID" --wallet-name miner --wallet-hotkey default
 ```
 
-Miner configuration uses command arguments. `--env-file .env.miner` is optional;
-the server's `.env` is not loaded automatically. The API base defaults to
+Miner commands take flags only, with defaults in `miner/config.py`; they read no
+`.env`. The API base defaults to
 `https://prexonai.com/api/v1` and can be changed with `--api-url`. Miners need no S3
 credentials. See [training and submission](docs/miner.md) for export, provenance,
 limits, and command options.
@@ -107,8 +111,8 @@ require real revisions, image digests, and a prepared dataset manifest.
 | `miner/` | Training, inspection, packaging, and submission |
 | `evaluation/` | Shared benchmark library and standalone CLI |
 | `api/` | Signed upload URLs for miners |
-| `shared/` | Configuration, contracts, checkpoints, storage, and transports |
-| `docker/` | CPU service and GPU worker images |
+| `shared/` | Target profiles, contracts, checkpoints, storage, and the shared upload limit |
+| `docker/` | Upload API and GPU worker images |
 | `tests/` | CPU integration tests and explicit GPU/network checks |
 
 [Architecture](docs/architecture.md) explains the trust boundaries.

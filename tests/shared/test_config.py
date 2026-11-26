@@ -1,13 +1,10 @@
 import json
-import os
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-import pytest
 import yaml
-from dotenv import dotenv_values
 
-from shared.config import Settings, load_settings
+from validator.config import ROOT, UPLOAD_POLICY_PATH, UPLOAD_STATE_PATH
 
 
 def profile(tmp_path):
@@ -34,133 +31,52 @@ def profile(tmp_path):
     return path
 
 
-def test_two_allocations_and_profile_identity(tmp_path, monkeypatch):
-    p = profile(tmp_path)
-    for slot, allocation in [(1, 20), (2, 80)]:
-        for name, value in {
-            "ID": f"org/target{slot}",
-            "REVISION": "a" * 40,
-            "PROFILE": str(p),
-            "ALLOCATION": str(allocation),
-        }.items():
-            monkeypatch.setenv(f"PREXON_MODEL_{slot}_{name}", value)
-    settings = load_settings("validator", None)
-    assert [t.allocation for t in settings.targets] == [20, 80]
-    assert settings.targets[0].identity != settings.targets[1].identity
-    original = settings.targets[0].identity
-    monkeypatch.setenv("LIUM_API_KEY", "private")
-    assert load_settings("validator", None).targets[0].identity == original
-    monkeypatch.setenv("PREXON_MODEL_2_ALLOCATION", "70")
-    with pytest.raises(ValueError, match="100"):
-        load_settings("validator", None)
-
-
-def test_api_loads_upload_settings_without_validator_or_target_configuration(monkeypatch):
-    monkeypatch.setenv("PREXON_UPLOADS_ENABLED", "true")
-    monkeypatch.setenv("PREXON_UPLOAD_STAGING_ROOT", "s3://private-staging/prexon")
-    monkeypatch.setenv("PREXON_UPLOAD_POLICY_PATH", "runtime/private/upload-policy.json")
-    monkeypatch.setenv("PREXON_MODEL_1_ID", "not-installed")
-    monkeypatch.setenv("PREXON_SESSION_SECONDS", "invalid-for-validator")
-    monkeypatch.setenv("PREXON_POLL_SECONDS", "invalid-for-validator")
-    monkeypatch.setenv("PREXON_MODEL_1_PROFILE", "/missing")
-    settings = load_settings("api", None)
-    assert settings.uploads_enabled
-    assert settings.upload_staging_root == "s3://private-staging/prexon"
-    assert settings.upload_policy_path.as_posix() == "runtime/private/upload-policy.json"
-    assert settings.targets == ()
-
-
-@pytest.mark.parametrize(
-    ("staging", "canonical", "public"),
-    [
-        ("s3://same/staging", "s3://same/canonical", "s3://winners"),
-        ("s3://same/staging", "s3://private", "s3://same/winners"),
-        ("s3://staging", "s3://same/private", "s3://same/winners"),
-    ],
-)
-def test_private_stores_and_public_releases_require_separate_buckets(staging, canonical, public):
-    with pytest.raises(ValueError, match="separate"):
-        Settings(
-            role="validator",
-            upload_staging_root=staging,
-            artifact_root=canonical,
-            public_artifact_root=public,
-        )
-
-
-def test_local_staging_cannot_overlap_canonical_store(tmp_path):
-    with pytest.raises(ValueError, match="separate"):
-        Settings(
-            role="validator",
-            artifact_root=str(tmp_path / "private"),
-            upload_staging_root=str(tmp_path / "private/staging"),
-            public_artifact_root=str(tmp_path / "public"),
-        )
-
-
-def test_api_cannot_presign_uploads_into_public_release_bucket():
-    with pytest.raises(ValueError, match="separate"):
-        Settings(
-            role="api",
-            upload_staging_root="s3://public/staging",
-            public_artifact_root="s3://public/winners",
-        )
-
-
-@pytest.mark.parametrize(
-    "root",
-    [
-        "s3://bucket/path?secret=x",
-        "s3://user:password@bucket",
-        "s3:///missing",
-        "s3://bucket/../public",
-    ],
-)
-def test_storage_roots_reject_ambiguous_object_addresses(root):
-    with pytest.raises(ValueError, match="storage"):
-        Settings(role="validator", upload_staging_root=root)
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "http://checkpoints.example",
-        "https://user:secret@example",
-        "https://checkpoints.example?token=secret",
-    ],
-)
-def test_public_release_base_must_be_stable_https(url):
-    with pytest.raises(ValueError, match="release base"):
-        Settings(role="validator", public_artifact_base_url=url)
-
-
-def test_evaluation_configuration_ignores_unrelated_validator_settings(monkeypatch):
-    from shared.config import load_settings
-
-    monkeypatch.setenv("PREXON_NETUID", "invalid-validator-setting")
-    monkeypatch.setenv("PREXON_POLL_SECONDS", "invalid-validator-setting")
-    monkeypatch.setenv("PREXON_SESSION_SECONDS", "60")
-    settings = load_settings("evaluation", None)
-    assert settings.role == "evaluation" and settings.session_seconds == 60
-    assert settings.targets == ()
-
-
-def test_compose_validator_writes_only_to_its_data_volume(monkeypatch):
-    # The container user cannot write to /app, where a relative path would resolve.
+def test_compose_api_mounts_config_and_policy_read_only_and_gets_only_s3_secrets():
+    # The validator runs on the host under pm2; only the upload API is a container.
     root = Path(__file__).resolve().parents[2]
-    values = {k: v for k, v in dotenv_values(root / ".env.example").items() if v}
     compose = yaml.safe_load((root / "docker/compose.yaml").read_text())
-    for key, value in compose["services"]["validator"]["environment"].items():
-        values[key] = re.sub(r"\$\{[A-Z0-9_]+:-([^}]*)\}", r"\1", str(value))
-    for key in [key for key in os.environ if key.startswith("PREXON_")]:
-        monkeypatch.delenv(key)
-    for key, value in values.items():
-        monkeypatch.setenv(key, value)
-    settings = load_settings("validator", env_file=None)
-    for field in (
-        "state_path",
-        "upload_policy_path",
-        "dataset_cache",
-        "ssh_known_hosts",
-    ):
-        assert Path(getattr(settings, field)).is_relative_to("/data"), field
+    assert set(compose["services"]) == {"api"}
+    api = compose["services"]["api"]
+    mounts = {}
+    for volume in api["volumes"]:
+        # Missing host paths must stop Compose, not appear as root-owned directories.
+        assert volume["type"] == "bind" and volume["bind"]["create_host_path"] is False
+        source = (root / "docker" / volume["source"]).resolve()
+        mounts[volume["target"]] = (source, volume.get("read_only", False))
+    assert mounts["/app/validator/config.py"] == (root / "validator/config.py", True)
+    # config.py anchors paths to the checkout: the host checkout, or /app in the container.
+    # A read-only directory mount keeps the validator's atomic replacement visible.
+    policy = UPLOAD_POLICY_PATH.relative_to(ROOT)
+    state = UPLOAD_STATE_PATH.relative_to(ROOT)
+    assert mounts[str(PurePosixPath("/app") / policy.parent)] == (root / policy.parent, True)
+    assert mounts[str(PurePosixPath("/app") / state.parent)] == (root / state.parent, False)
+    assert set(api["environment"]) == {
+        "S3_ACCESS_KEY_ID",
+        "S3_SECRET_ACCESS_KEY",
+        "S3_SESSION_TOKEN",
+    }
+    assert api["ports"] == ["127.0.0.1:8080:8080"]
+    # The validator writes the policy with mode 0640, so the API runs as its user.
+    assert api["user"].startswith("${API_CONTAINER_USER:?")
+    assert "PREXON_" not in (root / "docker/Dockerfile.api").read_text()
+
+
+def test_no_leftover_references_to_removed_settings():
+    # Names that no longer exist: the short-lived prexon.toml, the file chain, and the
+    # settings machinery replaced by plain config modules.
+    root = Path(__file__).resolve().parents[2]
+    files = [root / ".env.example", root / "README.md", *root.glob("docker/*")]
+    for folder in ("api", "evaluation", "miner", "shared", "validator", "docs"):
+        files += [p for p in (root / folder).rglob("*") if p.suffix in {".py", ".md"}]
+    stale = re.compile(
+        r"prexon(\.example)?\.toml|\[(chain|schedule|storage|rental|api)\] [a-z_]+"
+        r'|\bCHAIN_FILE\b|\bchain_file\b|FileChain|chain\.json|CHAIN = "file"'
+        r"|load_settings|settings_loader|load_miner_settings|read_environment"
+        r"|S3_ENDPOINT_URL|S3_REGION|\.env\.miner|moved to validator/config\.py"
+    )
+    leftovers = [
+        str(path.relative_to(root))
+        for path in files
+        if "superpowers" not in path.parts and stale.search(path.read_text())
+    ]
+    assert leftovers == []

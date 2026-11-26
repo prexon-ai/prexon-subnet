@@ -10,11 +10,17 @@ import pytest
 
 from shared.artifacts import ArtifactStore, package_checkpoint
 from shared.checkpoints import checkpoint_schema, sha256_file
-from shared.config import PublicReference, Settings, SimilarityPolicy
 from shared.contracts import Commitment, Qualification
+from shared.targets import PublicReference, SimilarityPolicy
 from shared.uploads import submission_key
 from tests.factories import make_checkpoint, provenance, target
 from validator.similarity import fingerprint
+
+
+@pytest.fixture(autouse=True)
+def intake_config(set_config, tmp_path):
+    # Production-shaped intake: a staging root (local here) and an exact network.
+    set_config(NETWORK="test", UPLOAD_STAGING_ROOT=str(tmp_path / "staging"))
 
 
 def setup_intake(
@@ -89,19 +95,7 @@ def setup_intake(
         uid=1,
         artifact=sha256_file(package),
     )
-    settings = Settings(
-        role="validator",
-        chain="file",
-        network="local",
-        netuid=17,
-        targets=(profile,),
-        artifact_root=store.root,
-        upload_staging_root=staging.root,
-        state_path=tmp_path / "state.sqlite3",
-    )
-    key = submission_key(
-        settings.network, commitment.netuid, commitment.hotkey, commitment.artifact
-    )
+    key = submission_key("test", commitment.netuid, commitment.hotkey, commitment.artifact)
     staging.write_file(key, package)
     return SimpleNamespace(
         store=store,
@@ -110,7 +104,7 @@ def setup_intake(
         package=package,
         head=head,
         commitment=commitment,
-        settings=settings,
+        state_path=tmp_path / "state.sqlite3",
         profiles={profile.identity: profile},
         key=key,
         reference_artifact=reference_artifact,
@@ -124,7 +118,6 @@ def prepare(intake, **kwargs):
         intake.store,
         intake.commitment,
         intake.profiles,
-        settings=intake.settings,
         fingerprints=kwargs.pop("fingerprints", {}),
         **kwargs,
     )
@@ -161,7 +154,7 @@ def test_different_approved_layout_is_not_blocked_by_public_reference(tmp_path):
     )
     intake.staging.write_file(
         submission_key(
-            intake.settings.network,
+            "test",
             intake.commitment.netuid,
             intake.commitment.hotkey,
             intake.commitment.artifact,
@@ -176,7 +169,9 @@ def test_different_approved_layout_is_not_blocked_by_public_reference(tmp_path):
 
 
 @pytest.mark.parametrize("authorization", [None, "different", "matching"])
-def test_remote_staging_binds_api_authorized_competition(tmp_path, monkeypatch, authorization):
+def test_remote_staging_binds_api_authorized_competition(
+    tmp_path, monkeypatch, authorization, set_config
+):
     intake = setup_intake(tmp_path)
     metadata = (
         {}
@@ -195,7 +190,7 @@ def test_remote_staging_binds_api_authorized_competition(tmp_path, monkeypatch, 
             return {"Metadata": metadata, "ContentLength": intake.package.stat().st_size}
 
     remote = ArtifactStore("s3://staging", s3_client=Hippius())
-    intake.settings = intake.settings.model_copy(update={"upload_staging_root": remote.root})
+    set_config(UPLOAD_STAGING_ROOT=remote.root)
     monkeypatch.setattr("validator.submissions.ArtifactStore", lambda *_args, **_kwargs: remote)
     monkeypatch.setattr(
         "validator.submissions._download_package",
@@ -239,12 +234,16 @@ def test_other_hotkey_cannot_claim_digest_even_when_canonical_object_exists(tmp_
     assert prepare(intake) is None
 
 
-def test_production_never_falls_back_to_digest_only_canonical_lookup(tmp_path):
+def test_production_never_falls_back_to_digest_only_canonical_lookup(tmp_path, set_config):
+    # Live targets always use Hippius stores; only a local development store may admit
+    # a package by its digest without private staging.
+    class Hippius:
+        def head_object(self, **kwargs):
+            raise AssertionError("a canonical object is never looked up by digest alone")
+
     intake = setup_intake(tmp_path)
-    intake.store.put_file(intake.package)
-    intake.settings = intake.settings.model_copy(
-        update={"chain": "bittensor", "upload_staging_root": ""}
-    )
+    intake.store = ArtifactStore("s3://private", s3_client=Hippius())
+    set_config(UPLOAD_STAGING_ROOT="")
     assert prepare(intake) is None
 
 
@@ -307,11 +306,11 @@ def test_synchronous_admission_persists_private_fingerprint_before_ready(tmp_pat
     from validator.submissions import admit_commitment
 
     intake = setup_intake(tmp_path)
-    state = State(intake.settings.state_path)
+    state = State(intake.state_path)
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100, settings=intake.settings)
+        admit_commitment(state, intake.store, intake.commitment, 100)
         assert intake.commitment.artifact in state.fingerprint_bank()
         assert state.ready_count(intake.profile.identity) == 1
         assert state.needs_similarity(intake.commitment.identity) is False
@@ -326,7 +325,7 @@ def test_background_worker_does_not_block_chain_polling_or_touch_sqlite(tmp_path
     from validator.submissions import prepare_commitment
 
     intake = setup_intake(tmp_path)
-    state = State(intake.settings.state_path)
+    state = State(intake.state_path)
     state.register_target(intake.profile)
     state.discover((intake.commitment,), 101, now=100)
     entered, release = threading.Event(), threading.Event()
@@ -344,10 +343,10 @@ def test_background_worker_does_not_block_chain_polling_or_touch_sqlite(tmp_path
     monkeypatch.setattr("validator.admission.prepare_commitment", blocked)
     service = AdmissionService()
     try:
-        service.pump(state, intake.store, intake.settings, 100)
+        service.pump(state, intake.store, 100)
         assert entered.wait(2)
         for _ in range(3):
-            service.pump(state, intake.store, intake.settings, 101)
+            service.pump(state, intake.store, 101)
             observed.append("chain scan")
             state.discover((), 102, now=101)
         assert observed == ["chain scan"] * 3
@@ -355,7 +354,7 @@ def test_background_worker_does_not_block_chain_polling_or_touch_sqlite(tmp_path
         release.set()
         # Waiting for worker completion is only a test synchronization boundary.
         service.close()
-        service.pump(state, intake.store, intake.settings, 102)
+        service.pump(state, intake.store, 102)
         assert state.ready_count(intake.profile.identity) == 1
         assert intake.commitment.artifact in state.fingerprint_bank()
     finally:
@@ -369,11 +368,11 @@ def test_public_reference_identity_is_screened_before_ready(tmp_path):
     from validator.submissions import admit_commitment
 
     intake = setup_intake(tmp_path, reference=True)
-    state = State(intake.settings.state_path)
+    state = State(intake.state_path)
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100, settings=intake.settings)
+        admit_commitment(state, intake.store, intake.commitment, 100)
         assert intake.reference_artifact in state.fingerprint_bank()
         assert state.ready_count(intake.profile.identity) == 0
         assert state.pending_admissions() == []
@@ -416,7 +415,6 @@ def test_owned_migration_snapshot_can_be_rechecked_without_miner_staging(tmp_pat
     intake = setup_intake(tmp_path)
     intake.store.put_file(intake.package)
     (Path(intake.staging.root) / intake.key).unlink()
-    intake.settings = intake.settings.model_copy(update={"chain": "bittensor"})
     assert prepare(intake) is None
     prepared = prepare(
         intake,
@@ -457,7 +455,7 @@ def test_sync_failures_distinguish_invalid_candidates_from_retryable_inputs(
             update={"artifact": hashlib.sha256(raw).hexdigest()}
         )
         key = submission_key(
-            intake.settings.network,
+            "test",
             intake.commitment.netuid,
             intake.commitment.hotkey,
             intake.commitment.artifact,
@@ -469,11 +467,11 @@ def test_sync_failures_distinguish_invalid_candidates_from_retryable_inputs(
             raise OSError("private endpoint details")
 
         monkeypatch.setattr("validator.submissions.download_url", unavailable)
-    state = State(intake.settings.state_path)
+    state = State(intake.state_path)
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100, settings=intake.settings)
+        admit_commitment(state, intake.store, intake.commitment, 100)
         assert state.ready_count(intake.profile.identity) == 0
         row = state.connection.execute(
             "SELECT status,reason FROM discoveries WHERE id=?", (intake.commitment.identity,)
@@ -495,17 +493,17 @@ def test_background_missing_object_retry_does_not_starve_next_discovery(tmp_path
 
     intake = setup_intake(tmp_path)
     missing = intake.commitment.model_copy(update={"artifact": "e" * 64, "block": 100})
-    state = State(intake.settings.state_path)
+    state = State(intake.state_path)
     service = AdmissionService()
     try:
         state.register_target(intake.profile)
         state.discover((missing, intake.commitment), 101, now=100)
-        service.pump(state, intake.store, intake.settings, 100)
+        service.pump(state, intake.store, 100)
         assert service.future.result(timeout=5) is None
-        service.pump(state, intake.store, intake.settings, 101)
+        service.pump(state, intake.store, 101)
         assert service.future.result(timeout=5).commitment == intake.commitment
         service.close()
-        service.pump(state, intake.store, intake.settings, 102)
+        service.pump(state, intake.store, 102)
         assert state.ready_count(intake.profile.identity) == 1
         assert state.pending_admissions(limit=1) == [missing]
     finally:

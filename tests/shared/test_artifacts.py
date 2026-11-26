@@ -219,20 +219,17 @@ def test_private_download_capabilities_do_not_leak_to_logs_or_errors(
     client.close()
 
 
-def test_storage_does_not_take_credentials_from_aws_environment():
+def test_storage_does_not_take_credentials_from_aws_environment(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "unrelated-aws-account")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
     with pytest.raises(ValueError, match="S3_ACCESS_KEY_ID"):
-        ArtifactStore(
-            "s3://private",
-            environment={
-                "AWS_ACCESS_KEY_ID": "unrelated-aws-account",
-                "AWS_SECRET_ACCESS_KEY": "aws-secret",
-            },
-        )
+        ArtifactStore("s3://private")
 
 
 def test_presigned_download_uses_hippius_region_and_path_style():
-    environment = {"S3_ACCESS_KEY_ID": "hip_test_access", "S3_SECRET_ACCESS_KEY": "test-secret"}
-    store = ArtifactStore("s3://private-artifacts/prefix", environment=environment)
+    store = ArtifactStore(
+        "s3://private-artifacts/prefix", access_key="hip_test_access", secret_key="test-secret"
+    )
     url = urlsplit(store.url("objects/" + "a" * 64, expires=300))
     assert url.scheme == "https" and url.hostname == "s3.hippius.com"
     assert url.path == "/private-artifacts/prefix/objects/" + "a" * 64

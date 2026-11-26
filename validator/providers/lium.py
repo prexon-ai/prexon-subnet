@@ -6,9 +6,9 @@ import json
 import shlex
 import subprocess
 
+from evaluation.lium_api import LiumClient
+from evaluation.ssh import ssh_arguments
 from shared.contracts import EvaluationJob
-from shared.lium import LiumClient
-from shared.ssh import ssh_arguments
 
 _LAUNCH = """import json,os,subprocess,sys
 data=json.load(sys.stdin)
@@ -26,7 +26,7 @@ class LiumProvider(LiumClient):
         pod = self.status(pod_id)
         subprocess.run(
             [
-                *ssh_arguments(self.settings, pod["ssh_connect_cmd"]),
+                *ssh_arguments(pod["ssh_connect_cmd"]),
                 "/opt/prexon/.venv/bin/python -c " + shlex.quote(_LAUNCH),
             ],
             input=json.dumps({"job_url": job_url, "result_url": result_url}),

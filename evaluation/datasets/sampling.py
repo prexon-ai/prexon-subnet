@@ -10,8 +10,8 @@ from pathlib import Path
 
 from evaluation.datasets.pool import INDEX, PoolShard, load_manifest
 from shared.checkpoints import sha256_file
-from shared.config import TargetConfig
 from shared.datasets import DatasetEvidence, Prompt, RoundPlan, SelectedWorkload
+from shared.targets import TargetConfig
 
 
 def seed_digest(target: TargetConfig, seed: str) -> str:

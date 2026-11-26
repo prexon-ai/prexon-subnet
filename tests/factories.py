@@ -5,7 +5,6 @@ import struct
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from shared.config import TargetConfig
 from shared.contracts import (
     Commitment,
     EvaluationJob,
@@ -14,6 +13,7 @@ from shared.contracts import (
     Measurement,
     Provenance,
 )
+from shared.targets import TargetConfig
 
 
 def make_checkpoint(path):

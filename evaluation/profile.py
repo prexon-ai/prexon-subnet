@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from shared.config import FrozenModel, Positive, TargetConfig
+from shared.targets import FrozenModel, Positive, TargetConfig
 
 EvaluationMode = Literal["head", "full"]
 

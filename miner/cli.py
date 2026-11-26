@@ -4,24 +4,24 @@ import argparse
 import json
 from pathlib import Path
 
-from miner.config import MinerTarget
+from miner.config import NETWORK, UPLOAD_API_URL, WALLET_HOTKEY, WALLET_NAME, WALLET_PATH
+from miner.target import MinerTarget
 from shared.artifacts import package_checkpoint
-from shared.config import Settings, TargetConfig, load_settings
+from shared.config import UPLOAD_MAX_BYTES
 from shared.contracts import Provenance
+from shared.targets import TargetConfig
 
 
 def _common_options() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False, argument_default=argparse.SUPPRESS)
-    common.add_argument("--env-file", type=Path, help="Optional miner dotenv file")
+    common.add_argument("--api-url", help=f"API base URL (default: {UPLOAD_API_URL})")
     common.add_argument(
-        "--api-url",
-        help=f"API base URL (default: {Settings.model_fields['upload_api_url'].default})",
+        "--network", choices=["finney", "test"], help=f"Bittensor network (default: {NETWORK})"
     )
-    common.add_argument("--network", help="Bittensor network or RPC endpoint")
-    common.add_argument("--netuid", type=int)
-    common.add_argument("--wallet-name")
-    common.add_argument("--wallet-hotkey")
-    common.add_argument("--wallet-path")
+    common.add_argument("--netuid", type=int, help="The Prexon subnet ID")
+    common.add_argument("--wallet-name", help=f"Default: {WALLET_NAME}")
+    common.add_argument("--wallet-hotkey", help=f"Default: {WALLET_HOTKEY}")
+    common.add_argument("--wallet-path", help=f"Default: {WALLET_PATH}")
     common.add_argument("--max-upload-bytes", type=int, help="Compressed package byte limit")
     return common
 
@@ -29,7 +29,7 @@ def _common_options() -> argparse.ArgumentParser:
 def _target_options(command: argparse.ArgumentParser, *, identity: bool = True) -> None:
     command.add_argument("--profile", type=Path, help="Optional full target benchmark profile")
     command.add_argument(
-        "--slot", type=int, choices=[1, 2], help="Target slot in an optional dotenv"
+        "--slot", type=int, choices=[1, 2], help="Slot recorded for --profile (default: 1)"
     )
     command.add_argument("--max-checkpoint-bytes", type=int, help="Local checkpoint byte limit")
     if identity:
@@ -38,58 +38,29 @@ def _target_options(command: argparse.ArgumentParser, *, identity: bool = True) 
         command.add_argument("--competition-id", help="Published validator competition digest")
 
 
-def _settings(args: argparse.Namespace) -> Settings:
-    env_file = getattr(args, "env_file", None)
-    if env_file is not None and not env_file.is_file():
-        raise ValueError(f"Miner dotenv file does not exist: {env_file}")
-    direct = bool(
-        getattr(args, "profile", None)
-        or getattr(args, "model_id", None)
-        or getattr(args, "revision", None)
-    )
-    overrides = {}
-    for option, field in {
-        "api_url": "upload_api_url",
-        "network": "network",
-        "netuid": "netuid",
-        "wallet_name": "wallet_name",
-        "wallet_hotkey": "wallet_hotkey",
-        "wallet_path": "wallet_path",
-        "max_upload_bytes": "upload_max_bytes",
-    }.items():
-        if hasattr(args, option):
-            overrides[field] = getattr(args, option)
-    settings = load_settings("miner", env_file, load_targets=not direct, overrides=overrides)
+def _targets(args: argparse.Namespace) -> tuple[TargetConfig, ...]:
+    """The target of --profile, with --model-id and --revision applied; none without it."""
     profile_path = getattr(args, "profile", None)
-    if profile_path is not None:
-        profile = json.loads(profile_path.read_text())
-        if not isinstance(profile, dict):
-            raise ValueError("Target profile must contain a JSON object")
-        profile.setdefault("slot", getattr(args, "slot", None) or 1)
-        profile.setdefault("allocation", 100)
-        for field, option in (("model_id", "model_id"), ("revision", "revision")):
-            value = getattr(args, option, None)
-            if value is not None:
-                profile[field] = value
-        settings = settings.model_copy(update={"targets": (TargetConfig.model_validate(profile),)})
-    if args.command == "submit" and args.slot is not None:
-        selected = tuple(target for target in settings.targets if target.slot == args.slot)
-        if not selected:
-            raise ValueError("Selected model slot is disabled")
-        settings = settings.model_copy(update={"targets": selected})
-    return settings
+    if profile_path is None:
+        return ()
+    profile = json.loads(profile_path.read_text())
+    if not isinstance(profile, dict):
+        raise ValueError("Target profile must contain a JSON object")
+    profile.setdefault("slot", getattr(args, "slot", None) or 1)
+    profile.setdefault("allocation", 100)
+    for field in ("model_id", "revision"):
+        value = getattr(args, field, None)
+        if value is not None:
+            profile[field] = value
+    return (TargetConfig.model_validate(profile),)
 
 
-def _target(args: argparse.Namespace, settings: Settings) -> MinerTarget:
-    if settings.targets:
-        slot = args.slot or settings.targets[0].slot
-        source = next((target for target in settings.targets if target.slot == slot), None)
-        if source is None:
-            raise ValueError("Selected model slot is disabled")
-        data = MinerTarget.from_profile(source).model_dump()
+def _target(args: argparse.Namespace, targets: tuple[TargetConfig, ...]) -> MinerTarget:
+    if targets:
+        data = MinerTarget.from_profile(targets[0]).model_dump()
     else:
         if not args.model_id or not args.revision:
-            raise ValueError("Provide --model-id and --revision, or --profile / --env-file")
+            raise ValueError("Provide --model-id and --revision, or --profile")
         data = {"model_id": args.model_id, "revision": args.revision}
     if args.competition_id is not None:
         data["competition_id"] = args.competition_id
@@ -122,8 +93,8 @@ def main() -> None:
     inspect = commands.add_parser("inspect")
     inspect.add_argument("--checkpoint", type=Path, required=True)
     inspect.add_argument("--output", type=Path, required=True)
-    targets = commands.add_parser("targets", parents=[common])
-    _target_options(targets)
+    listing = commands.add_parser("targets", parents=[common])
+    _target_options(listing)
     args = parser.parse_args()
     if args.command == "inspect":
         from shared.checkpoints import checkpoint_schema
@@ -133,7 +104,7 @@ def main() -> None:
         args.output.write_text(schema.model_dump_json() + "\n")
         return
     try:
-        settings = _settings(args)
+        targets = _targets(args)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     if args.command == "targets":
@@ -149,18 +120,18 @@ def main() -> None:
             )
         ):
             try:
-                selected = _target(args, settings)
+                selected = _target(args, targets)
             except (ValueError, OSError) as exc:
                 parser.error(str(exc))
             record = selected.model_dump(mode="json")
-            record["slot"] = args.slot or (settings.targets[0].slot if settings.targets else 1)
+            record["slot"] = args.slot or (targets[0].slot if targets else 1)
             print(json.dumps([record], indent=2))
             return
         print(
             json.dumps(
                 [
                     {"slot": t.slot, "model_id": t.model_id, "competition_id": t.identity}
-                    for t in settings.targets
+                    for t in targets
                 ],
                 indent=2,
             )
@@ -169,20 +140,24 @@ def main() -> None:
     if args.command == "submit":
         from miner.submit import submit
 
-        if args.max_checkpoint_bytes is None:
-            print(submit(settings, args.package, publish=not args.upload_only))
-        else:
-            print(
-                submit(
-                    settings,
-                    args.package,
-                    publish=not args.upload_only,
-                    max_checkpoint_bytes=args.max_checkpoint_bytes,
-                )
+        print(
+            submit(
+                args.package,
+                netuid=getattr(args, "netuid", 0),
+                network=getattr(args, "network", NETWORK),
+                api_url=getattr(args, "api_url", UPLOAD_API_URL),
+                wallet_name=getattr(args, "wallet_name", WALLET_NAME),
+                wallet_hotkey=getattr(args, "wallet_hotkey", WALLET_HOTKEY),
+                wallet_path=getattr(args, "wallet_path", WALLET_PATH),
+                targets=targets,
+                max_upload_bytes=getattr(args, "max_upload_bytes", UPLOAD_MAX_BYTES),
+                publish=not args.upload_only,
+                max_checkpoint_bytes=args.max_checkpoint_bytes,
             )
+        )
         return
     try:
-        target = _target(args, settings)
+        target = _target(args, targets)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     if args.command == "train":

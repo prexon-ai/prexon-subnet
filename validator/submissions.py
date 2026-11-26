@@ -12,9 +12,17 @@ from pathlib import Path
 
 from shared.artifacts import ArtifactStore, download_url, extract_package
 from shared.checkpoints import validate_checkpoint
-from shared.config import Settings, TargetConfig, read_environment
+from shared.config import UPLOAD_MAX_BYTES
 from shared.contracts import Commitment, Qualification, SubmissionManifest
+from shared.targets import TargetConfig
 from shared.uploads import submission_key
+from validator.config import (
+    NETWORK,
+    S3_ACCESS_KEY_ID,
+    S3_SECRET_ACCESS_KEY,
+    S3_SESSION_TOKEN,
+    UPLOAD_STAGING_ROOT,
+)
 from validator.similarity import (
     Fingerprint,
     SimilarityComparison,
@@ -43,24 +51,26 @@ class PreparedSubmission:
 def _candidate_source(
     store: ArtifactStore,
     commitment: Commitment,
-    settings: Settings,
     allow_canonical_snapshot: bool,
 ) -> tuple[ArtifactStore, str] | None:
-    if settings.upload_staging_root:
+    if UPLOAD_STAGING_ROOT:
         try:
             staging = ArtifactStore(
-                settings.upload_staging_root, environment=read_environment(settings.env_file)
+                UPLOAD_STAGING_ROOT,
+                access_key=S3_ACCESS_KEY_ID,
+                secret_key=S3_SECRET_ACCESS_KEY,
+                session_token=S3_SESSION_TOKEN,
             )
         except ValueError:
             raise AdmissionPending("private_staging_unavailable") from None
-        key = submission_key(
-            settings.network, commitment.netuid, commitment.hotkey, commitment.artifact
-        )
+        key = submission_key(NETWORK, commitment.netuid, commitment.hotkey, commitment.artifact)
         if staging.exists(key):
             return staging, key
         if not allow_canonical_snapshot:
             return None
-    elif not allow_canonical_snapshot and not (settings.chain == "file" and not store.bucket):
+    elif not allow_canonical_snapshot and store.bucket:
+        # A local store exists only in development and tests: live targets require
+        # Hippius (validator.main), where packages arrive through private staging.
         return None
     key = f"objects/{commitment.artifact}"
     return (store, key) if store.exists(key) else None
@@ -139,7 +149,6 @@ def prepare_commitment(
     commitment: Commitment,
     profiles: dict[str, TargetConfig],
     *,
-    settings: Settings,
     fingerprints: dict[str, Fingerprint],
     allow_canonical_snapshot: bool = False,
     historical_sources: dict[str, TargetConfig] | None = None,
@@ -150,7 +159,7 @@ def prepare_commitment(
     must check again. A newly discovered commitment must prove its hotkey-scoped
     staging object even if that digest already exists in canonical storage.
     """
-    source = _candidate_source(store, commitment, settings, allow_canonical_snapshot)
+    source = _candidate_source(store, commitment, allow_canonical_snapshot)
     if source is None:
         return None
     source_store, key = source
@@ -164,10 +173,10 @@ def prepare_commitment(
     with tempfile.TemporaryDirectory(prefix="prexon-private-admission-") as temporary:
         directory = Path(temporary)
         package, head = directory / "candidate.tar.gz", directory / "candidate"
-        _download_package(source_store, key, package, max_bytes=settings.upload_max_bytes)
+        _download_package(source_store, key, package, max_bytes=UPLOAD_MAX_BYTES)
         parse_limit = max(
             (t.policy.max_checkpoint_bytes for t in profiles.values()),
-            default=settings.upload_max_bytes,
+            default=UPLOAD_MAX_BYTES,
         )
         manifest = extract_package(package, head, commitment.artifact, parse_limit)
         if staged_remote and authorized_competition != manifest.competition_id:
@@ -309,22 +318,15 @@ def admit_commitment(
     store: ArtifactStore,
     commitment: Commitment,
     now: float,
-    *,
-    settings: Settings | None = None,
 ) -> None:
     if state.known(commitment.identity) and not state.needs_similarity(commitment.identity):
         state.resolve_admission(commitment, "admitted")
         return
-    if settings is None:
-        if store.bucket:
-            return  # Remote embedding requires explicit private-staging settings.
-        settings = Settings(role="validator", chain="file", artifact_root=store.root)
     try:
         prepared = prepare_commitment(
             store,
             commitment,
             state.registered_profiles(),
-            settings=settings,
             fingerprints=state.fingerprint_bank(),
             allow_canonical_snapshot=state.needs_similarity(commitment.identity),
             historical_sources=state.comparison_sources(),

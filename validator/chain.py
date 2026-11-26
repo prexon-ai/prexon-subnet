@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections.abc import Container
-from pathlib import Path
 from typing import Any, Protocol
 
 from shared.chain import connect, require_success, wallet
-from shared.config import FrozenModel, Settings
 from shared.contracts import Commitment
+from shared.targets import FrozenModel
+from validator.config import (
+    NETUID,
+    NETWORK,
+    WALLET_HOTKEY,
+    WALLET_NAME,
+    WALLET_PATH,
+    WEIGHTS_VERSION,
+)
 
 log = logging.getLogger(__name__)
 
@@ -33,12 +39,18 @@ class Chain(Protocol):
 
 
 class BittensorChain:
-    def __init__(self, settings: Settings, *, client: Any = None, signer: Any = None) -> None:
-        self.settings = settings
-        self.client = client if client is not None else connect(settings)
+    def __init__(self, *, client: Any = None, signer: Any = None) -> None:
+        self._client = client
         self.signer = signer
         # Finalized block hashes never change; kept for the reveal blocks still listed.
         self._reveal_hashes: dict[int, str] = {}
+
+    @property
+    def client(self) -> Any:
+        # Connect on first use: a validator without targets never reads the chain.
+        if self._client is None:
+            self._client = connect(NETWORK)
+        return self._client
 
     def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot:
         """Read finalized reveals; `known` holds commitment identities already discovered.
@@ -50,7 +62,7 @@ class BittensorChain:
         # Replay snapshots after downtime to avoid skipping the bounded on-chain reveal history.
         end = finalized if start_block is None else min(finalized, start_block + 120)
         blocks = [end] if start_block is None else range(start_block + 1, end + 1)
-        meta = self.client.metagraph(self.settings.netuid, block=end)
+        meta = self.client.metagraph(NETUID, block=end)
         owners = {int(n.uid): str(n.hotkey) for n in meta.neurons}
         by_hotkey = {hotkey: uid for uid, hotkey in owners.items()}
         found: dict[str, Commitment] = {}
@@ -58,7 +70,7 @@ class BittensorChain:
         previous = self._reveal_hashes
         hashes: dict[int, str] = {}
         for block in blocks:
-            records = self.client.get_all_revealed_commitments(self.settings.netuid, block=block)
+            records = self.client.get_all_revealed_commitments(NETUID, block=block)
             for hotkey, entries in records.items():
                 if hotkey not in by_hotkey:
                     continue
@@ -71,7 +83,7 @@ class BittensorChain:
                         cached = previous.get(revealed_at)
                         hashes[revealed_at] = cached or self.client.get_block_hash(revealed_at)
                     commitment = Commitment(
-                        netuid=self.settings.netuid,
+                        netuid=NETUID,
                         block=revealed_at,
                         block_hash=hashes[revealed_at],
                         # Storage does not expose extrinsic positions. Same-block ties are hotkey
@@ -113,21 +125,21 @@ class BittensorChain:
 
     def publish(self, weights: dict[int, float]) -> None:
         if self.signer is None:
-            self.signer = wallet(self.settings)
+            self.signer = wallet(WALLET_NAME, WALLET_HOTKEY, WALLET_PATH)
         uids = sorted(weights)
         result = self.client.set_weights(
             wallet=self.signer,
-            netuid=self.settings.netuid,
+            netuid=NETUID,
             uids=uids,
             weights=[weights[uid] for uid in uids],
-            version_key=self.settings.weights_version,
+            version_key=WEIGHTS_VERSION,
             wait_for_inclusion=True,
             wait_for_finalization=True,
         )
         require_success(result)
 
     def current_owners(self) -> dict[int, str]:
-        meta = self.client.metagraph(self.settings.netuid, block=self.finalized_height())
+        meta = self.client.metagraph(NETUID, block=self.finalized_height())
         return {int(n.uid): str(n.hotkey) for n in meta.neurons}
 
     def block_hash(self, block: int) -> str:
@@ -138,32 +150,3 @@ class BittensorChain:
     def finalized_height(self) -> int:
         head = self.client.substrate.get_chain_finalised_head()
         return int(self.client.substrate.get_block_number(head))
-
-
-class FileChain:
-    """Explicit local development input, never a network submission authority."""
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-
-    def scan(self, start_block: int | None = None, known: Container[str] = ()) -> ChainSnapshot:
-        del start_block, known
-        return ChainSnapshot.model_validate_json(self.path.read_bytes())
-
-    def publish(self, weights: dict[int, float]) -> None:
-        output = self.path.with_name("weights.json")
-        temp = output.with_suffix(".tmp")
-        temp.write_text(json.dumps(weights, sort_keys=True) + "\n")
-        temp.replace(output)
-
-    def current_owners(self) -> dict[int, str]:
-        return self.scan().owners
-
-    def block_hash(self, block: int) -> str:
-        snapshot = self.scan()
-        if block > snapshot.block or block not in snapshot.block_hashes:
-            raise ValueError("File chain needs an explicit finalized sampling block hash")
-        return snapshot.block_hashes[block]
-
-    def finalized_height(self) -> int:
-        return self.scan().block

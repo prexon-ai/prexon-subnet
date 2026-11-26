@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from shared.config import TargetConfig
 from shared.contracts import EvaluationJob
+from shared.targets import TargetConfig
 
 
 class Provider(Protocol):

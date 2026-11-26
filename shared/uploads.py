@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 
-from shared.config import Digest, FrozenModel, Positive
+from shared.targets import Digest, FrozenModel, Positive
 
 
 class UploadTarget(FrozenModel):

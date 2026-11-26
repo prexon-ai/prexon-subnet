@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from shared.config import Digest, FrozenModel, Name, Revision, identity
+from shared.targets import Digest, FrozenModel, Name, Revision, identity
 
 
 class RoundContext(FrozenModel):

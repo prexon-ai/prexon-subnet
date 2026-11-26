@@ -7,8 +7,8 @@ from statistics import mean
 
 from evaluation.datasets.sampling import validate_selection
 from evaluation.metrics import throughput_summary
-from shared.config import TargetConfig
 from shared.contracts import BenchmarkEvidence, Decision, Measurement
+from shared.targets import TargetConfig
 
 
 def score_benchmark(

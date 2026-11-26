@@ -14,20 +14,19 @@ storage credentials or the validator's private benchmark profile.
 | Option | Purpose / default |
 | --- | --- |
 | `--api-url` | Full versioned API base; default `https://prexonai.com/api/v1` |
-| `--network` | Bittensor network or RPC endpoint; default `finney` |
+| `--network` | `finney` or `test`; default `finney` |
 | `--netuid` | Supply the actual Prexon subnet ID |
 | `--wallet-name`, `--wallet-hotkey` | Both default to `default` |
 | `--wallet-path` | Default `~/.bittensor/wallets` |
 | `--max-upload-bytes` | Compressed upload limit; default 4 GiB + 2 MiB |
 | `--max-checkpoint-bytes` | Local checkpoint limit; default 4 GiB without a profile |
-| `--env-file` | Optional miner dotenv, explicitly selected; command arguments take precedence |
 
 Common connection/wallet options work before or after the subcommand. Miner
-commands do not automatically load the server's `.env`. To use a separate file,
-pass `--env-file .env.miner`; a template is not required. `--profile PATH` remains
-available for a full target profile, and `--slot` selects a target from that file or
-an explicitly supplied dotenv. Direct training/packaging uses `--model-id` and
-`--revision`; packaging also requires the published `--competition-id`.
+commands take flags only: the defaults are in `miner/config.py` and no `.env` is read
+(`prexon-evaluate` uses the Evaluation section, see [evaluation](evaluation.md)).
+`--profile PATH` supplies a full target profile and `--slot` records its slot. Direct
+training/packaging uses `--model-id` and `--revision`; packaging also requires the
+published `--competition-id`.
 
 In the commands below, supply the real `TARGET_REVISION`, `COMPETITION_ID` and
 `NETUID` values. Revisions are exact 40-character checkpoint commits; competition
@@ -110,7 +109,7 @@ registration, an accepted competition, and a package within its target/global
 limits. See [upload API settings and responses](api.md#upload-api) for retryable
 failures.
 
-For local development, pass `--api-url http://127.0.0.1:8000/api/v1`. The URL is the
+For local development, pass `--api-url http://127.0.0.1:8080/api/v1`. The URL is the
 versioned base; the client adds only `/uploads`, including when the base ends in `/`.
 
 Uploading creates no ready-queue slot. After discovering your finalized commitment,

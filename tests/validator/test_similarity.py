@@ -8,7 +8,7 @@ import tracemalloc
 import numpy as np
 import pytest
 
-from shared.config import Hardware, TargetConfig, Workload
+from shared.targets import Hardware, TargetConfig, Workload
 from tests.factories import make_checkpoint
 
 

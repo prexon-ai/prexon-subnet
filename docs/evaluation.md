@@ -31,8 +31,8 @@ uses no saved baseline scores. See [scoring](scoring.md) for comparison rules.
 
 ## Profile settings
 
-The template contains a complete `target` configuration. It does not use dotenv
-model slots. Paths are relative to the profile file, except `target_path` inside
+The template contains a complete `target` configuration. It does not use the
+validator's `TARGETS`. Paths are relative to the profile file, except `target_path` inside
 a Lium pod, which must be absolute.
 
 | Field | Purpose / default |
@@ -54,16 +54,20 @@ snapshot. Template values are placeholders, not qualified model/GPU combinations
 
 ## Lium or an existing pod
 
-For Lium, configure host credentials in `.env` or select another file with
-`--env-file`. Relevant settings are:
+For Lium, fill in the Evaluation section of the checkout's `.env`; miners and
+validators use the same section:
 
 ```dotenv
 LIUM_API_KEY=your-private-key
-PREXON_LIUM_TEMPLATE_ID=your-template-id
-PREXON_SSH_PRIVATE_KEY=~/.ssh/id_ed25519
-PREXON_SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
-PREXON_LIUM_VOLUME_ID=
+LIUM_TEMPLATE_ID=your-template-id
+LIUM_VOLUME_ID=
+SSH_PRIVATE_KEY=~/.ssh/id_ed25519
+SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 ```
+
+`evaluation/config.py` holds the other values: the Lium URL, the dataset cache and the
+default round limits (`SESSION_SECONDS`, `SESSION_MAX_COST`), which a profile's
+`session_seconds` and `session_max_cost` override.
 
 A target-specific `lium_template_id` overrides the global template. The host can
 be CPU-only. A [qualified worker image](docker.md) must supply SGLang/Torch and

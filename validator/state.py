@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from shared.config import TargetConfig
 from shared.contracts import (
     Award,
     Commitment,
@@ -23,6 +22,7 @@ from shared.contracts import (
 )
 from shared.datasets import DatasetEvidence, RoundContext
 from shared.releases import WinnerRelease
+from shared.targets import TargetConfig
 from validator.similarity import Fingerprint, SimilarityComparison, compare, comparison_shortlist
 
 _SCHEMA = """

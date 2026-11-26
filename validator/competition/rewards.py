@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 
-from shared.config import TargetConfig
 from shared.contracts import Award
+from shared.targets import TargetConfig
 
 # Share of a target's allocation by winner rank, newest first. The whole
 # allocation is always paid out while the target has at least one winner.

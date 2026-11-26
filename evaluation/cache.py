@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from evaluation.process import terminate_process_group
-from shared.config import TargetConfig
+from shared.targets import TargetConfig
 
 
 def stage_target(

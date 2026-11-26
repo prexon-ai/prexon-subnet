@@ -2,7 +2,7 @@
 
 Prexon separates miner tooling, benchmark execution, validator authority, and
 upload authorization. Miners and validators both use the `evaluation` library;
-it depends on shared contracts and transports, not on validator or miner
+it depends on shared contracts and storage, not on validator or miner
 implementations.
 
 ## Submission flow
@@ -32,9 +32,10 @@ identity and priority; only validated candidates become GPU-ready.
 | Validator SQLite | Discoveries, fingerprints, sessions, jobs, awards, releases | Controller thread only |
 | API SQLite | Upload nonce and quota state | API only |
 
-The validator and trusted upload API share S3 settings in one host `.env`.
-Compose limits the API's file mounts to the read-only upload policy directory and
-its own replay database. Public data is read from the public bucket, never from
+The validator and trusted upload API share the S3 key in one host `.env` and
+their settings in `validator/config.py`. Compose limits the API's file mounts to
+`validator/config.py` and the upload policy directory, both read-only, and its own
+replay database. Public data is read from the public bucket, never from
 the validator's machine. Workers receive no wallet, rental credentials, or
 database.
 

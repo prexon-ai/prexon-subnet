@@ -71,7 +71,7 @@ Explicitly rebalance `category_weights` to sum to one and prepare a new pool.
 
 ## Configure a target
 
-Both dotenv-selected validator profiles and standalone `profile.target` accept:
+Both validator target profiles and standalone `profile.target` accept:
 
 ```json
 {
@@ -101,11 +101,10 @@ measure execution noise; they do not count as additional unique inputs. Output
 budgets remain configurable per workload: add cells for short/long outputs or
 different serving loads, with published weights.
 
-Set `PREXON_DATASET_CACHE=runtime/datasets` in dotenv for the controller or local
-evaluator. Unlike profile head paths, this operational cache path is relative to
-the working directory. Docker Compose mounts it at `/data/datasets`. Changing
-sources, rendering or sampling policy changes the competition identity and
-requires reference remeasurement and runtime qualification. Inline text prompts
+Set `DATASET_CACHE` in `evaluation/config.py`; the controller and the evaluator both
+use it (default: `runtime/datasets` in the checkout). Changing sources,
+rendering or sampling policy changes the competition identity and requires
+reference remeasurement and runtime qualification. Inline text prompts
 remain available for small smoke tests; dataset workloads never cycle prompts.
 
 ## Round reproducibility

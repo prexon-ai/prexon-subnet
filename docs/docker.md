@@ -1,35 +1,50 @@
-# Docker deployment
+# Docker: upload API and GPU worker image
 
-Compose runs the CPU validator and the upload API on one machine. Temporary GPU workers are
-provisioned separately through Lium.
+Docker is used for two things: the upload API on the validator machine, and the
+image that rented Lium GPUs run for evaluations. The validator itself runs on the
+host under pm2; see the [validator guide](validator.md#start-and-monitor).
 
-## Start the CPU services
+## Start the upload API
+
+Run these from the repository checkout, as the same user that runs the validator:
 
 ```bash
-cp .env.example .env
-mkdir -p runtime/public/artifacts runtime/intake-policy runtime/api profiles
-sudo chown -R 10001:10001 runtime
+mkdir -p runtime/intake-policy runtime/api
+export API_CONTAINER_USER="$(id -u):$(id -g)"
 docker compose --env-file .env -f docker/compose.yaml config --quiet
 docker compose --env-file .env -f docker/compose.yaml up --build -d
 ```
 
-Images run as UID 10001. Empty target slots start an idle installation. Configure
-production targets using the [validator guide](validator.md) before enabling them.
-Compose uses one `.env`: the validator receives controller settings, while the API
-receives selected API/storage values. It maps runtime paths to `/data`, including
-the SSH `known_hosts` file used for rented workers.
+The API container runs as the validator's user because the validator writes the
+upload policy with mode 0640. Create both directories before the first start:
+Compose refuses to start without them, instead of letting Docker create
+root-owned directories in their place. Set `API_CONTAINER_USER` the same way
+whenever you run `up` again after pulling changes. The container reads its settings
+from the checkout's `validator/config.py`, mounted read-only, and receives only
+the three S3 keys from `.env`. Restart it (`docker compose ... restart api`) after
+editing `validator/config.py`.
 
-| Service | Host mount | Container path / access |
-| --- | --- | --- |
-| Validator | `runtime/` | `/data`, writable |
-| Validator | `profiles/` | `/app/profiles`, read-only |
-| API | `runtime/intake-policy/` | `/data/intake-policy`, read-only |
-| API | `runtime/api/` | `/data/api`, writable |
+| Host mount | Container path / access |
+| --- | --- |
+| `validator/config.py` | `/app/validator/config.py`, read-only |
+| `runtime/intake-policy/` | `/app/runtime/intake-policy`, read-only |
+| `runtime/api/` | `/app/runtime/api`, writable |
 
-The policy directory must be mounted as a directory because updates use atomic
-rename. API replay state is separate from validator SQLite. Keep both databases
-on local persistent storage. Wallet and SSH key mounts belong only in the
-validator service; use container paths in its configuration.
+Keep `UPLOAD_POLICY_PATH` and `UPLOAD_STATE_PATH` under `ROOT / "runtime"` in
+`validator/config.py`: paths are anchored to the checkout on the host and to `/app`
+in the container, which is where the directories above are mounted.
+
+**Upgrading a container started from an older image.** Older images read
+`PREXON_API_*` and `PREXON_UPLOAD_*` environment variables and used mounts under
+`/data`. The current image ignores those variables. Started with the old
+`docker run` command, it would never see the upload policy, and its replay database
+would live inside the container and be lost on the next recreate. Replace it with the
+Compose setup above (or the same three mounts and only the three S3 keys).
+
+The policy directory must be mounted as a directory because the validator replaces
+the file atomically. API replay state is separate from validator SQLite; keep both
+on local persistent storage. The API never mounts the validator's database, wallet
+or SSH keys.
 
 ## Storage and public routing
 
@@ -41,19 +56,19 @@ Create three separate [Hippius](https://console.hippius.com) buckets:
 | `prexon-private` | Private | Checked packages, qualification, jobs, and results |
 | `prexon-public` | Public read | Winner packages and the dashboard's data |
 
-Configure one key and the three roots in `.env`:
+`validator/config.py` already uses these three buckets (`UPLOAD_STAGING_ROOT`,
+`ARTIFACT_ROOT`, `PUBLIC_ARTIFACT_ROOT`, and `PUBLIC_ARTIFACT_BASE_URL =
+"https://s3.hippius.com/prexon-public"`); change them there if yours have other names.
+Put one key in `.env`:
 
 ```dotenv
-S3_ENDPOINT_URL=https://s3.hippius.com
-S3_REGION=decentralized
 S3_ACCESS_KEY_ID=your-access-key
 S3_SECRET_ACCESS_KEY=your-secret-key
-PREXON_UPLOAD_STAGING_ROOT=s3://prexon-uploads
-PREXON_ARTIFACT_ROOT=s3://prexon-private
-PREXON_PUBLIC_ARTIFACT_ROOT=s3://prexon-public
-PREXON_PUBLIC_ARTIFACT_BASE_URL=https://s3.hippius.com/prexon-public
-PREXON_UPLOADS_ENABLED=true
 ```
+
+Set `UPLOADS_ENABLED = True` in `validator/config.py` when miners may upload.
+
+The client always uses `https://s3.hippius.com` and region `decentralized`.
 
 The key must cover all three buckets; the validator and the upload API both use
 it. Use a read-only anonymous `s3:GetObject` policy on the public bucket; new
@@ -67,10 +82,12 @@ The website reads the dashboard's data straight from the public bucket: give it
 `PREXON_DATA_URL=<public base URL>/dashboard`. The anonymous read policy above
 covers those files too.
 
-The upload API binds to host `127.0.0.1:8000` by default. Configure HTTPS on `prexonai.com` and
-forward `/api/` to the local service while preserving the prefix. The public base
-is `https://prexonai.com/api/v1`; the OpenAPI UI is `/api/docs`. Host bind/port follow
-`PREXON_API_HOST` and `PREXON_API_PORT`; the container listens on port 8000.
+The upload API listens on `127.0.0.1:8080` by default (`API_HOST` and
+`API_PORT`). Compose publishes the container's port 8080 on `127.0.0.1:8080`; the
+image starts the API with `--host 0.0.0.0`, which overrides `API_HOST` inside the
+container. Configure HTTPS on `prexonai.com` and forward `/api/` to the local
+service while preserving the prefix. The public base is
+`https://prexonai.com/api/v1`; the OpenAPI UI is `/api/docs`.
 
 ## GPU worker image
 

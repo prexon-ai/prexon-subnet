@@ -10,10 +10,10 @@ import pytest
 
 from shared.artifacts import ArtifactStore, package_checkpoint
 from shared.checkpoints import checkpoint_schema
-from shared.config import Settings
 from shared.contracts import Commitment, Qualification, SubmissionManifest
 from tests.factories import PrunedChainNode, evidence, make_checkpoint, provenance, target
 from validator.chain import BittensorChain, ChainSnapshot
+from validator.config import MAX_EVALUATION_ATTEMPTS, SESSION_RETRY_SECONDS, SESSION_SECONDS
 from validator.controller import Controller
 from validator.state import State
 
@@ -94,22 +94,10 @@ def setup_pipeline(tmp_path, t=None):
         artifact=digest,
         submitted_at=0,
     )
-    settings = Settings(
-        role="validator",
-        targets=(t,),
-        state_path=tmp_path / "state.sqlite",
-        artifact_root=store.root,
-        chain="file",
-        provider="local",
-        schedule_seconds=21600,
-        dataset_cache=tmp_path / "datasets",
-        public_artifact_root=str(tmp_path / "public/artifacts"),
-        upload_policy_path=tmp_path / "private/upload-policy.json",
-    )
-    state = State(settings.state_path)
+    state = State(tmp_path / "state.sqlite")
     chain = TestChain([commitment])
     provider = RentalBoundary(store)
-    return Controller(settings, state, store, chain, provider), state, store, chain, provider, t
+    return Controller((t,), state, store, chain, provider), state, store, chain, provider, t
 
 
 def test_chain_to_winner_and_recovery_is_idempotent(tmp_path):
@@ -175,13 +163,13 @@ def test_a_failure_while_publishing_the_dashboard_does_not_stop_the_controller(
 def test_expired_session_deletes_pod_and_keeps_unfinished_queue(tmp_path):
     controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
     controller.tick(21600)
-    expired = 21600 + controller.settings.session_seconds + 1
+    expired = 21600 + SESSION_SECONDS + 1
     controller.tick(expired)
     assert len(provider.deleted) == 1
     # A session that reached no verdict is not followed by another rental at once.
     assert len(provider.rents) == 1
     assert state.ready_count(t.identity) == 1
-    controller.tick(expired + controller.settings.session_retry_seconds)
+    controller.tick(expired + SESSION_RETRY_SECONDS)
     # Its original six-hour deadline remains due after an infrastructure retry.
     assert state.ready_count(t.identity) == 0
     assert len(provider.rents) == 2
@@ -267,10 +255,10 @@ def test_scanning_and_weights_continue_after_a_reveal_outlives_node_history(tmp_
     digest = chain.commitments[0].artifact
     node = PrunedChainNode(head=100, reveals={"miner": ((99, f"px1:{digest}"),)})
     live = Controller(
-        controller.settings,
+        controller.targets,
         state,
         store,
-        BittensorChain(controller.settings, client=node, signer=object()),
+        BittensorChain(client=node, signer=object()),
         provider,
     )
     live.tick(1000)
@@ -296,7 +284,7 @@ def test_unusable_evaluations_stop_after_the_attempt_limit(tmp_path):
                 f"jobs/{running.job_id}/result.json", unusable.model_dump_json().encode()
             )
         now += 120
-    assert len(provider.rents) == controller.settings.max_evaluation_attempts == 3
+    assert len(provider.rents) == MAX_EVALUATION_ATTEMPTS == 3
     assert len(provider.deleted) == 3
     assert state.submissions()[0]["status"] == "stalled"
     assert not state.active_sessions()
@@ -323,12 +311,12 @@ def test_nothing_private_about_a_job_reaches_public_storage(tmp_path):
     store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
     controller.tick(21603)
     published = sorted((tmp_path / "public").rglob("*.json"))
-    assert {path.relative_to(tmp_path / "public/artifacts").as_posix() for path in published} == {
+    assert {path.relative_to(tmp_path / "public").as_posix() for path in published} == {
         "dashboard/snapshot.json",
         "dashboard/index.json",
         "dashboard/models/model1-aaaaaaa.json",
     }
-    snapshot = json.loads((tmp_path / "public/artifacts/dashboard/snapshot.json").read_text())
+    snapshot = json.loads((tmp_path / "public/dashboard/snapshot.json").read_text())
     assert snapshot["targets"][0]["model_id"] == t.model_id
     assert [e["score"] for e in snapshot["evaluations"]] == [2]
     for path in published:
@@ -353,7 +341,7 @@ def test_tick_publishes_model_history_and_keeps_it_while_the_chain_is_unreachabl
     store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
     controller.tick(21603)
     # The website reads these from public storage, never from this machine.
-    public = ArtifactStore(controller.settings.public_artifact_root)
+    public = controller.public_store
     index = json.loads(public.read_bytes("dashboard/index.json"))
     (model,) = index["models"]
     assert (model["winners"], model["reward_shares"], model["active_from"]) == (1, [1.0], 21600)

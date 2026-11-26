@@ -11,10 +11,10 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from shared.config import Settings
+from evaluation.config import SSH_KNOWN_HOSTS, SSH_PRIVATE_KEY
 
 
-def ssh_arguments(settings: Settings, descriptor: str) -> list[str]:
+def ssh_arguments(descriptor: str) -> list[str]:
     parts = shlex.split(descriptor)
     if len(parts) == 4 and parts[0:2] == ["ssh", "-p"]:
         port, host = parts[2], parts[3]
@@ -31,14 +31,14 @@ def ssh_arguments(settings: Settings, descriptor: str) -> list[str]:
         or host.startswith("-")
     ):
         raise ValueError("Unsafe SSH connection descriptor")
-    known_hosts = settings.ssh_known_hosts.expanduser()
+    known_hosts = SSH_KNOWN_HOSTS.expanduser()
     known_hosts.parent.mkdir(parents=True, exist_ok=True)
     return [
         "ssh",
         "-F",
         "/dev/null",
         "-i",
-        str(settings.ssh_private_key.expanduser()),
+        str(SSH_PRIVATE_KEY.expanduser()),
         "-p",
         port,
         "-o",
@@ -60,8 +60,8 @@ def ssh_arguments(settings: Settings, descriptor: str) -> list[str]:
 
 
 class SshTransport:
-    def __init__(self, settings: Settings, descriptor: str, tick: Callable[[], None]) -> None:
-        self.arguments = ssh_arguments(settings, descriptor)
+    def __init__(self, descriptor: str, tick: Callable[[], None]) -> None:
+        self.arguments = ssh_arguments(descriptor)
         self.tick = tick
 
     def run(

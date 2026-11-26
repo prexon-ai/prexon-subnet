@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from pydantic import model_validator
 
-from shared.config import Digest, FrozenModel, Positive
+from shared.targets import Digest, FrozenModel, Positive
 
 
 def public_release_key(source_artifact: str) -> str:

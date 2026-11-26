@@ -8,9 +8,9 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from miner.config import MinerTarget
+from miner.target import MinerTarget
 from shared.checkpoints import sha256_file, validate_checkpoint
-from shared.config import TargetConfig
+from shared.targets import TargetConfig
 
 
 def train_and_export(

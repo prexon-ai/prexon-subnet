@@ -6,9 +6,9 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from shared.config import Digest, FrozenModel, Positive, Revision, TargetConfig
 from shared.datasets import DatasetEvidence, RoundContext
 from shared.releases import WinnerRelease
+from shared.targets import Digest, FrozenModel, Positive, Revision, TargetConfig
 
 
 class FileDigest(FrozenModel):
@@ -59,7 +59,7 @@ class Commitment(FrozenModel):
 
     @property
     def identity(self) -> str:
-        from shared.config import identity
+        from shared.targets import identity
 
         return identity(self, exclude={"submitted_at"})
 

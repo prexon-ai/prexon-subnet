@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from shared.config import Settings
 from tests.factories import PrunedChainNode, target
 from validator.chain import BittensorChain
 from validator.providers.lium import LiumProvider
@@ -37,9 +36,10 @@ class ChainBoundary:
         return datetime.fromtimestamp(1_800_000_000 + block * 12, UTC)
 
 
-def test_chain_reads_finalized_snapshot_and_excludes_future():
+def test_chain_reads_finalized_snapshot_and_excludes_future(set_config):
     boundary = ChainBoundary()
-    chain = BittensorChain(Settings(role="validator", netuid=1), client=boundary)
+    set_config(NETUID=1)
+    chain = BittensorChain(client=boundary)
     snapshot = chain.scan()
     assert snapshot.block == 100
     assert snapshot.owners == {1: "miner"}
@@ -48,10 +48,11 @@ def test_chain_reads_finalized_snapshot_and_excludes_future():
     assert boundary.queries == [100, 100]
 
 
-def test_chain_scan_does_not_reread_the_time_of_reveals_it_already_knows():
+def test_chain_scan_does_not_reread_the_time_of_reveals_it_already_knows(set_config):
     # Reveals stay in chain storage indefinitely; their block state does not.
     node = PrunedChainNode(head=100, reveals={"miner": ((99, "px1:" + "c" * 64),)})
-    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    set_config(NETUID=1)
+    chain = BittensorChain(client=node)
     first = chain.scan()
     assert first.commitments[0].submitted_at == 1_800_000_000 + 99 * 12
     node.head, node.timestamp_queries = 190, []
@@ -60,10 +61,11 @@ def test_chain_scan_does_not_reread_the_time_of_reveals_it_already_knows():
     assert node.timestamp_queries == []
 
 
-def test_chain_scan_reads_each_reveal_block_hash_once():
+def test_chain_scan_reads_each_reveal_block_hash_once(set_config):
     # Every scanned block lists the whole reveal history, here one reveal at block 99.
     node = PrunedChainNode(head=100, reveals={"miner": ((99, "px1:" + "c" * 64),)})
-    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    set_config(NETUID=1)
+    chain = BittensorChain(client=node)
     first = chain.scan()
     node.head = 110
     later = chain.scan(100, known={first.commitments[0].identity})  # replays blocks 101-110
@@ -72,18 +74,19 @@ def test_chain_scan_reads_each_reveal_block_hash_once():
 
 
 @pytest.mark.parametrize("failure", ["discarded", "zero"])
-def test_chain_scan_keeps_a_new_reveal_whose_block_time_is_unavailable(failure):
+def test_chain_scan_keeps_a_new_reveal_whose_block_time_is_unavailable(failure, set_config):
     node = PrunedChainNode(head=190, reveals={"miner": ((99, "px1:" + "c" * 64),)})
     if failure == "zero":  # Some public nodes answer for discarded state with an empty value.
         node.get_timestamp = lambda block: datetime.fromtimestamp(0, UTC)
-    chain = BittensorChain(Settings(role="validator", netuid=1), client=node)
+    set_config(NETUID=1)
+    chain = BittensorChain(client=node)
     snapshot = chain.scan()
     # Admission falls back to the first-discovery time when chain time is absent.
     assert [c.artifact for c in snapshot.commitments] == ["c" * 64]
     assert snapshot.commitments[0].submitted_at is None
 
 
-def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path):
+def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path, set_config):
     key = tmp_path / "id.pub"
     key.write_text("ssh-ed25519 public")
     requests = []
@@ -99,15 +102,9 @@ def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path):
             return httpx.Response(200, json={"success": True, "pod_id": "pod"})
         return httpx.Response(204)
 
-    settings = Settings(
-        role="validator",
-        lium_template_id="template",
-        ssh_public_key=key,
-        session_seconds=3601,
-        session_max_cost=4,
-    )
+    set_config(LIUM_TEMPLATE_ID="template", SSH_PUBLIC_KEY=key)
     client = httpx.Client(base_url="https://lium.io/api", transport=httpx.MockTransport(handle))
-    provider = LiumProvider(settings, "private", client=client)
+    provider = LiumProvider("private", 4, client=client)
     session = {"id": "a" * 32, "started_at": 100, "deadline": 3701}
     request = provider.build_request(session, target())
     assert request["termination_hours"] == 2
@@ -130,18 +127,18 @@ def test_lium_rent_uses_exact_idempotency_and_bounded_termination(tmp_path):
     ],
 )
 def test_lium_separates_a_definite_refusal_from_an_unknown_rental_outcome(status, body, refused):
-    from shared.lium import RentalRefused
+    from evaluation.lium_api import RentalRefused
 
     client = httpx.Client(
         base_url="https://lium.io/api",
         transport=httpx.MockTransport(lambda _: httpx.Response(status, json=body)),
     )
-    provider = LiumProvider(Settings(role="validator"), "key", client=client)
+    provider = LiumProvider("key", 100, client=client)
     with pytest.raises(RentalRefused if refused else httpx.HTTPStatusError):
         provider.rent("a" * 32, {"pod_name": "prexon-" + "a" * 32})
 
 
-def test_lium_rejects_template_image_mismatch(tmp_path):
+def test_lium_rejects_template_image_mismatch(tmp_path, set_config):
     client = httpx.Client(
         base_url="https://lium.io/api",
         transport=httpx.MockTransport(
@@ -150,8 +147,7 @@ def test_lium_rejects_template_image_mismatch(tmp_path):
             )
         ),
     )
-    provider = LiumProvider(
-        Settings(role="validator", lium_template_id="template"), "key", client=client
-    )
+    set_config(LIUM_TEMPLATE_ID="template")
+    provider = LiumProvider("key", 100, client=client)
     with pytest.raises(ValueError, match="image"):
         provider.build_request({"id": "a" * 32, "started_at": 1, "deadline": 3601}, target())

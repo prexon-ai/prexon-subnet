@@ -5,7 +5,6 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 
 from shared.artifacts import ArtifactStore
-from shared.config import Settings
 from shared.contracts import Commitment
 from validator.state import State
 from validator.submissions import (
@@ -23,7 +22,7 @@ class AdmissionService:
         self.commitment: Commitment | None = None
         self.closed = False
 
-    def pump(self, state: State, store: ArtifactStore, settings: Settings, now: float) -> None:
+    def pump(self, state: State, store: ArtifactStore, now: float) -> None:
         if self.future is not None:
             if not self.future.done():
                 return
@@ -56,7 +55,6 @@ class AdmissionService:
             store,
             commitment,
             profiles,
-            settings=settings,
             fingerprints=fingerprints,
             allow_canonical_snapshot=needs_similarity,
             historical_sources=historical_sources,

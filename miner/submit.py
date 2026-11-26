@@ -13,11 +13,13 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import ValidationError
 
+from miner.config import NETWORK, UPLOAD_API_URL, WALLET_HOTKEY, WALLET_NAME, WALLET_PATH
 from shared.artifacts import extract_package
 from shared.chain import commit_artifact, wallet
 from shared.checkpoints import sha256_file
-from shared.config import Policy, Settings
+from shared.config import UPLOAD_MAX_BYTES
 from shared.http_logging import private_http
+from shared.targets import Policy, TargetConfig
 from shared.uploads import UploadGrant, UploadRequest
 
 
@@ -59,16 +61,21 @@ def _freeze(package: Path, destination: Path, max_bytes: int) -> None:
 
 
 def submit(
-    settings: Settings,
     package: Path,
     *,
+    netuid: int,
+    network: str = NETWORK,
+    api_url: str = UPLOAD_API_URL,
+    wallet_name: str = WALLET_NAME,
+    wallet_hotkey: str = WALLET_HOTKEY,
+    wallet_path: str = WALLET_PATH,
+    targets: tuple[TargetConfig, ...] = (),
+    max_upload_bytes: int = UPLOAD_MAX_BYTES,
     publish: bool = True,
     max_checkpoint_bytes: int | None = None,
     client: httpx.Client | None = None,
 ) -> str:
-    endpoint = _upload_endpoint(settings.upload_api_url)
-    if publish and settings.chain != "bittensor":
-        raise ValueError("File chain mode cannot publish commitments; use --upload-only")
+    endpoint = _upload_endpoint(api_url)
     if max_checkpoint_bytes is not None and (
         isinstance(max_checkpoint_bytes, bool)
         or not isinstance(max_checkpoint_bytes, int)
@@ -79,13 +86,13 @@ def submit(
         max_checkpoint_bytes
         if max_checkpoint_bytes is not None
         else max(
-            (target.policy.max_checkpoint_bytes for target in settings.targets),
+            (target.policy.max_checkpoint_bytes for target in targets),
             default=Policy().max_checkpoint_bytes,
         )
     )
     with tempfile.TemporaryDirectory() as directory:
         frozen = Path(directory) / "submission.tar.gz"
-        _freeze(package, frozen, settings.upload_max_bytes)
+        _freeze(package, frozen, max_upload_bytes)
         digest = sha256_file(frozen)
         manifest = extract_package(
             frozen,
@@ -96,14 +103,14 @@ def submit(
         target = next(
             (
                 target
-                for target in settings.targets
+                for target in targets
                 if target.model_id == manifest.target_id
                 and target.revision == manifest.target_revision
                 and manifest.method in target.methods
             ),
             None,
         )
-        if settings.targets and target is None:
+        if targets and target is None:
             raise ValueError("Package target/method does not match a configured target")
         if (
             target
@@ -111,11 +118,12 @@ def submit(
         ):
             raise ValueError("Package checkpoint exceeds configured size limit")
         size = frozen.stat().st_size
-        hotkey = wallet(settings).hotkey
+        signer = wallet(wallet_name, wallet_hotkey, wallet_path)
+        hotkey = signer.hotkey
         authorization = UploadRequest(
             hotkey=hotkey.ss58_address,
-            network=settings.network,
-            netuid=settings.netuid,
+            network=network,
+            netuid=netuid,
             competition_id=manifest.competition_id,
             artifact=digest,
             size=size,
@@ -170,5 +178,5 @@ def submit(
                         "Private artifact upload failed; no commitment was sent"
                     ) from None
         if publish:
-            commit_artifact(settings, digest)
+            commit_artifact(digest, network=network, netuid=netuid, signer=signer)
         return digest

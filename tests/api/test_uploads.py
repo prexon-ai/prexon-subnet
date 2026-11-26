@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from api.main import create_app
 from shared.artifacts import ArtifactStore
-from shared.config import Settings
+from validator.config import UPLOAD_URL_TTL_SECONDS
 
 NOW = 1_800_000_000
 ALICE = Keypair.create_from_uri("//Alice")
@@ -48,7 +48,7 @@ def request_body(*, key=ALICE, nonce="0" * 32, **changes):
     }
 
 
-def write_policy(settings, **changes):
+def write_policy(path, **changes):
     from shared.uploads import UploadPolicy, UploadTarget
 
     policy = UploadPolicy(
@@ -58,32 +58,37 @@ def write_policy(settings, **changes):
         hotkeys=(ALICE.ss58_address,),
         targets=(UploadTarget(competition_id=COMPETITION, max_package_bytes=8192),),
     ).model_copy(update=changes)
-    settings.upload_policy_path.parent.mkdir(parents=True, exist_ok=True)
-    settings.upload_policy_path.write_text(policy.model_dump_json())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(policy.model_dump_json())
 
 
 @pytest.fixture
-def upload_env(tmp_path):
+def upload_env(tmp_path, set_config):
     from api.uploads import UploadService
 
-    settings = Settings(
-        role="api",
-        uploads_enabled=True,
-        upload_staging_root="s3://private-staging/prefix",
-        upload_state_path=tmp_path / "api.sqlite3",
-        upload_policy_path=tmp_path / "private/policy.json",
+    policy_path, state_path = tmp_path / "private/policy.json", tmp_path / "api.sqlite3"
+    set_config(
+        UPLOADS_ENABLED=True,
+        UPLOAD_STAGING_ROOT="s3://private-staging/prefix",
+        UPLOAD_STATE_PATH=state_path,
+        UPLOAD_POLICY_PATH=policy_path,
     )
-    write_policy(settings)
+    write_policy(policy_path)
     presigner = Presigner()
-    store = ArtifactStore(settings.upload_staging_root, s3_client=presigner)
+    store = ArtifactStore("s3://private-staging/prefix", s3_client=presigner)
     clock = [NOW]
 
     def app():
-        service = UploadService(settings, store=store, clock=lambda: clock[0])
-        return TestClient(create_app(settings=settings, upload_service=service))
+        service = UploadService(store=store, clock=lambda: clock[0])
+        return TestClient(create_app(upload_service=service))
 
     return SimpleNamespace(
-        settings=settings, presigner=presigner, store=store, clock=clock, app=app
+        policy_path=policy_path,
+        state_path=state_path,
+        presigner=presigner,
+        store=store,
+        clock=clock,
+        app=app,
     )
 
 
@@ -128,7 +133,7 @@ def test_signed_upload_grants_exact_scoped_put_headers(upload_env):
             "Content-Length": "4096",
             "x-amz-meta-prexon-competition-id": COMPETITION,
         },
-        "expires_at": NOW + upload_env.settings.upload_url_ttl_seconds,
+        "expires_at": NOW + UPLOAD_URL_TTL_SECONDS,
         "artifact": ARTIFACT,
     }
     assert upload_env.presigner.calls == [
@@ -142,17 +147,17 @@ def test_signed_upload_grants_exact_scoped_put_headers(upload_env):
                     "ContentLength": 4096,
                     "Metadata": {"prexon-competition-id": COMPETITION},
                 },
-                "ExpiresIn": upload_env.settings.upload_url_ttl_seconds,
+                "ExpiresIn": UPLOAD_URL_TTL_SECONDS,
                 "HttpMethod": "PUT",
             },
         )
     ]
-    assert not (upload_env.settings.upload_state_path.parent / "validator.sqlite3").exists()
+    assert not (upload_env.state_path.parent / "validator.sqlite3").exists()
 
 
 @pytest.mark.parametrize("policy_change", [{"updated_at": NOW - 301}, {"updated_at": NOW + 301}])
 def test_stale_or_future_policy_is_retryable_without_storage(upload_env, policy_change):
-    write_policy(upload_env.settings, **policy_change)
+    write_policy(upload_env.policy_path, **policy_change)
     response = upload_env.app().post("/api/v1/uploads", json=request_body())
     assert response.status_code == 503
     assert response.headers["retry-after"]
@@ -162,9 +167,9 @@ def test_stale_or_future_policy_is_retryable_without_storage(upload_env, policy_
 @pytest.mark.parametrize("policy_bytes", [None, b"not json"])
 def test_missing_or_invalid_private_policy_is_retryable(upload_env, policy_bytes):
     if policy_bytes is None:
-        upload_env.settings.upload_policy_path.unlink()
+        upload_env.policy_path.unlink()
     else:
-        upload_env.settings.upload_policy_path.write_bytes(policy_bytes)
+        upload_env.policy_path.write_bytes(policy_bytes)
     response = upload_env.app().post("/api/v1/uploads", json=request_body())
     assert response.status_code == 503
     assert upload_env.presigner.calls == []
@@ -215,7 +220,7 @@ def test_replay_survives_api_restart_and_is_hotkey_scoped(upload_env):
     body = request_body()
     assert upload_env.app().post("/api/v1/uploads", json=body).status_code == 200
     assert upload_env.app().post("/api/v1/uploads", json=body).status_code == 409
-    write_policy(upload_env.settings, hotkeys=(ALICE.ss58_address, BOB.ss58_address))
+    write_policy(upload_env.policy_path, hotkeys=(ALICE.ss58_address, BOB.ss58_address))
     assert upload_env.app().post("/api/v1/uploads", json=request_body(key=BOB)).status_code == 200
     assert len(upload_env.presigner.calls) == 2
 
@@ -231,7 +236,7 @@ def test_hourly_quota_is_durable_and_recovers_after_window(upload_env):
     assert response.headers["retry-after"]
     assert len(upload_env.presigner.calls) == 4
     upload_env.clock[0] += 3601
-    write_policy(upload_env.settings, updated_at=upload_env.clock[0])
+    write_policy(upload_env.policy_path, updated_at=upload_env.clock[0])
     response = upload_env.app().post(
         "/api/v1/uploads", json=request_body(nonce="6" * 32, timestamp=upload_env.clock[0])
     )
@@ -243,29 +248,28 @@ def test_hourly_quota_is_durable_and_recovers_after_window(upload_env):
     assert response.status_code == 409
 
 
-def test_global_byte_limit_caps_target_policy(upload_env):
+def test_global_byte_limit_caps_target_policy(upload_env, set_config):
     from api.uploads import UploadService
 
-    settings = upload_env.settings.model_copy(update={"upload_max_bytes": 2048})
-    service = UploadService(settings, store=upload_env.store, clock=lambda: NOW)
-    response = TestClient(create_app(settings=settings, upload_service=service)).post(
+    set_config(UPLOAD_MAX_BYTES=2048)
+    service = UploadService(store=upload_env.store, clock=lambda: NOW)
+    response = TestClient(create_app(upload_service=service)).post(
         "/api/v1/uploads", json=request_body()
     )
     assert response.status_code == 413
     assert upload_env.presigner.calls == []
 
 
-def test_real_local_hippius_presign_binds_exact_size_type_and_competition(upload_env, monkeypatch):
+def test_real_local_hippius_presign_binds_exact_size_type_and_competition(
+    upload_env, monkeypatch, set_config
+):
     from urllib.parse import parse_qs, urlsplit
 
     from api.uploads import UploadService
 
-    monkeypatch.setenv("S3_ENDPOINT_URL", "https://s3.hippius.com")
-    monkeypatch.setenv("S3_ACCESS_KEY_ID", "test-access-key")
-    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", "test-secret-key")
-    monkeypatch.setenv("S3_REGION", "decentralized")
-    service = UploadService(upload_env.settings, clock=lambda: NOW)
-    client = TestClient(create_app(settings=upload_env.settings, upload_service=service))
+    set_config(S3_ACCESS_KEY_ID="test-access-key", S3_SECRET_ACCESS_KEY="test-secret-key")
+    service = UploadService(clock=lambda: NOW)
+    client = TestClient(create_app(upload_service=service))
     response = client.post("/api/v1/uploads", json=request_body())
     assert response.status_code == 200, response.text
     capability = urlsplit(response.json()["url"])
@@ -326,7 +330,7 @@ def test_parallel_requests_cannot_exceed_hotkey_quota(upload_env):
 def test_policy_refresh_applies_to_existing_api_process(upload_env):
     client = upload_env.app()
     assert client.post("/api/v1/uploads", json=request_body()).status_code == 200
-    write_policy(upload_env.settings, hotkeys=())
+    write_policy(upload_env.policy_path, hotkeys=())
     response = client.post("/api/v1/uploads", json=request_body(nonce="1" * 32))
     assert response.status_code == 403
     assert len(upload_env.presigner.calls) == 1
@@ -336,7 +340,7 @@ def test_tampering_with_registered_hotkey_or_allowed_competition_invalidates_sig
     from shared.uploads import UploadTarget
 
     write_policy(
-        upload_env.settings,
+        upload_env.policy_path,
         hotkeys=(ALICE.ss58_address, BOB.ss58_address),
         targets=(
             UploadTarget(competition_id=COMPETITION, max_package_bytes=8192),

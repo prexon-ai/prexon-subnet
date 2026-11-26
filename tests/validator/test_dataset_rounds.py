@@ -2,7 +2,6 @@ import pytest
 
 from evaluation.datasets.sampling import select_round
 from shared.artifacts import ArtifactStore
-from shared.config import Settings
 from shared.contracts import Decision
 from shared.datasets import RoundContext
 from tests.evaluation.test_datasets import dataset_target, prepared_pool
@@ -45,18 +44,10 @@ def test_round_waits_for_future_entropy_freezes_members_and_survives_restart(tmp
     target = dataset_target(manifest)
     state = State(tmp_path / "state.sqlite")
     first, second = admit(state, target, 1), admit(state, target, 2)
-    settings = Settings(
-        role="validator",
-        targets=(target,),
-        chain="file",
-        dataset_cache=tmp_path / "datasets",
-        public_artifact_root=str(tmp_path / "public"),
-        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
-    )
     store, chain = ArtifactStore(str(tmp_path / "artifacts")), Chain()
     provider = RentalBoundary(store)
     monkeypatch.setattr(Controller, "_qualified", lambda *args: True)
-    controller = Controller(settings, state, store, chain, provider)
+    controller = Controller((target,), state, store, chain, provider)
     chain.finalized_block = 150  # Discovery is replaying history; future hashes are already known.
     controller.tick(21600)
     assert state.active_sessions() == []
@@ -67,7 +58,7 @@ def test_round_waits_for_future_entropy_freezes_members_and_survives_restart(tmp
     assert session["cutoff_block"] == 110
     late = admit(state, target, 0)  # An older late admission must not block frozen members.
     chain.height = 117  # Polling can skip blocks; entropy must still be exactly block 111.
-    controller = Controller(settings, State(tmp_path / "state.sqlite"), store, chain, provider)
+    controller = Controller((target,), State(tmp_path / "state.sqlite"), store, chain, provider)
     controller.tick(21601)
     assert len(provider.rents) == len(provider.jobs) == 1
     job = provider.jobs[0]
@@ -96,14 +87,6 @@ def test_entropy_anchor_is_observed_after_membership_freezes(tmp_path, monkeypat
     target = dataset_target(manifest)
     state = State(tmp_path / "state.sqlite")
     admit(state, target, 1)
-    settings = Settings(
-        role="validator",
-        targets=(target,),
-        chain="file",
-        dataset_cache=tmp_path / "datasets",
-        public_artifact_root=str(tmp_path / "public"),
-        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
-    )
     store, chain = ArtifactStore(str(tmp_path / "artifacts")), Chain()
     provider = RentalBoundary(store)
 
@@ -112,7 +95,7 @@ def test_entropy_anchor_is_observed_after_membership_freezes(tmp_path, monkeypat
         return True
 
     monkeypatch.setattr(Controller, "_qualified", qualify)
-    controller = Controller(settings, state, store, chain, provider)
+    controller = Controller((target,), state, store, chain, provider)
     controller.tick(21600)
     session = state.active_sessions()[0]
     assert session["cutoff_block"] == 117
@@ -204,7 +187,9 @@ def test_no_dataset_session_without_a_known_finalized_cutoff(tmp_path):
     assert state.active_sessions() == []
 
 
-def test_qualified_production_worker_consumes_the_controller_plan(tmp_path, pod, monkeypatch):
+def test_qualified_production_worker_consumes_the_controller_plan(
+    tmp_path, pod, monkeypatch, set_config
+):
     import asyncio
     import time
 
@@ -215,6 +200,7 @@ def test_qualified_production_worker_consumes_the_controller_plan(tmp_path, pod,
 
     root = tmp_path / "controller"
     _, manifest = prepared_pool(root / "datasets")
+    set_config(DATASET_CACHE=root / "datasets")
     controller, state, store, chain, provider, config = setup_pipeline(
         root,
         dataset_target(manifest),

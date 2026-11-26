@@ -7,8 +7,8 @@ from statistics import mean, stdev
 
 from scipy.stats import t as student_t
 
-from shared.config import FrozenModel, TargetConfig
 from shared.contracts import Measurement
+from shared.targets import FrozenModel, TargetConfig
 
 
 class ThroughputSummary(FrozenModel):

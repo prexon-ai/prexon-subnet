@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from shared.config import (
+from shared.targets import (
     DEFAULT_BUCKETS,
     FrozenModel,
     LengthBucket,

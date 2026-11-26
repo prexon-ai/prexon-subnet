@@ -6,7 +6,6 @@ import re
 from collections.abc import Mapping
 
 from shared.artifacts import ArtifactStore
-from shared.config import TargetConfig
 from shared.contracts import (
     Commitment,
     DashboardSnapshot,
@@ -19,6 +18,7 @@ from shared.contracts import (
     PublicTarget,
     PublicWinner,
 )
+from shared.targets import TargetConfig
 from validator.competition import reward_shares
 from validator.public_files import publish_file
 from validator.state import State, target_key

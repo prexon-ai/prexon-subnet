@@ -11,13 +11,14 @@ import time
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from shared.config import Settings, TargetConfig
 from shared.contracts import EvaluationJob
+from shared.targets import TargetConfig
+from validator.config import STATE_PATH
 
 
 class LocalProvider:
-    def __init__(self, settings: Settings) -> None:
-        self.directory = settings.state_path.parent / "local-workers"
+    def __init__(self) -> None:
+        self.directory = STATE_PATH.parent / "local-workers"
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def build_request(self, session: dict[str, Any], target: TargetConfig) -> dict[str, Any]:

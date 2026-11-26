@@ -51,7 +51,7 @@ def prepared_pool(tmp_path):
 
 
 def dataset_target(manifest):
-    from shared.config import DatasetConfig, TargetConfig
+    from shared.targets import DatasetConfig, TargetConfig
 
     config = target().model_dump()
     config["model_id"] = "org/target"
@@ -101,7 +101,7 @@ def test_sampling_is_reproducible_distinct_and_stratified(tmp_path):
 
 def test_sampling_rejects_insufficient_pool_and_changed_cache(tmp_path):
     from evaluation.datasets.sampling import select_round
-    from shared.config import TargetConfig
+    from shared.targets import TargetConfig
 
     _, manifest = prepared_pool(tmp_path)
     config = dataset_target(manifest)
@@ -172,7 +172,7 @@ def test_head_report_requires_dataset_evidence_even_when_timings_are_complete(tm
 
 
 def test_dataset_profiles_reject_tiny_samples_mixed_inputs_and_context_overflow(tmp_path):
-    from shared.config import TargetConfig
+    from shared.targets import TargetConfig
 
     _, manifest = prepared_pool(tmp_path)
     valid = dataset_target(manifest).model_dump()

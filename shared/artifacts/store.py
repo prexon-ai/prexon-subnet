@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import shutil
 import tempfile
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
 
-from shared.artifacts.hippius import hippius_environment
 from shared.checkpoints import sha256_file
 from shared.http_logging import private_http
 
@@ -45,9 +42,20 @@ def download_url(url: str, output: Path, max_bytes: int, *, allow_file: bool = F
             raise RuntimeError("Private artifact download failed") from None
 
 
+# Hippius is the only S3 service: every s3:// root lives there.
+HIPPIUS_ENDPOINT = "https://s3.hippius.com"
+HIPPIUS_REGION = "decentralized"
+
+
 class ArtifactStore:
     def __init__(
-        self, root: str, *, s3_client: Any = None, environment: Mapping[str, str] | None = None
+        self,
+        root: str,
+        *,
+        s3_client: Any = None,
+        access_key: str = "",
+        secret_key: str = "",
+        session_token: str = "",
     ) -> None:
         self.root = root
         parsed = urlparse(root)
@@ -58,27 +66,21 @@ class ArtifactStore:
             import boto3
             from botocore.config import Config
 
-            env = hippius_environment(environment if environment is not None else os.environ)
-            kwargs = {
-                name: env[key]
-                for name, key in {
-                    "aws_access_key_id": "S3_ACCESS_KEY_ID",
-                    "aws_secret_access_key": "S3_SECRET_ACCESS_KEY",
-                    "aws_session_token": "S3_SESSION_TOKEN",
-                    "region_name": "S3_REGION",
-                }.items()
-                if env.get(key)
-            }
+            if not access_key or not secret_key:
+                raise ValueError("Hippius storage needs S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY")
             self.client = boto3.client(
                 "s3",
-                endpoint_url=env["S3_ENDPOINT_URL"],
+                endpoint_url=HIPPIUS_ENDPOINT,
+                region_name=HIPPIUS_REGION,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                aws_session_token=session_token or None,
                 config=Config(
                     signature_version="s3v4",
                     s3={"addressing_style": "path"},
                     request_checksum_calculation="when_required",
                     response_checksum_validation="when_required",
                 ),
-                **kwargs,
             )
         if parsed.scheme and parsed.scheme not in {"s3"}:
             raise ValueError("Artifact root must be a local directory or s3:// URI")

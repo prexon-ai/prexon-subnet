@@ -6,6 +6,7 @@ from tests.factories import evidence, job, target
 from tests.integration.test_controller import setup_pipeline
 from tests.validator.test_state import admit
 from validator.competition import score_evidence
+from validator.config import SESSION_RETRY_SECONDS
 from validator.controller import Controller
 
 
@@ -28,8 +29,7 @@ def test_second_target_can_start_while_first_is_running(tmp_path):
             first = t
         else:
             second = t
-    settings = controller.settings.model_copy(update={"targets": (first, second)})
-    controller = Controller(settings, state, store, chain, provider)
+    controller = Controller((first, second), state, store, chain, provider)
     for t in (first, second):
         admit(state, t, t.slot)
     controller.tick(21600)
@@ -54,7 +54,7 @@ def test_failed_pod_deletion_retains_session_authority(tmp_path):
     provider.delete = deleted
     controller.tick(40001)
     assert not state.active_sessions()
-    controller.tick(40001 + controller.settings.session_retry_seconds)
+    controller.tick(40001 + SESSION_RETRY_SECONDS)
     assert len(state.active_sessions()) == 1
     assert state.active_sessions()[0]["id"] != stopping_id
     assert len(provider.rents) == 2
@@ -85,7 +85,7 @@ def test_repackaged_identical_weights_do_not_create_a_second_claim(tmp_path):
 
 
 def test_missing_public_evidence_and_bad_slo_do_not_win():
-    from shared.config import PublicReference
+    from shared.targets import PublicReference
     from tests.factories import job
     from validator.competition import score_evidence
 
@@ -164,9 +164,7 @@ def test_disabling_all_models_clears_previously_initialized_weights(tmp_path):
     result = evidence(j).model_copy(update={"started_at": 21601, "finished_at": 21602})
     store.write_bytes(f"jobs/{j.job_id}/result.json", result.model_dump_json().encode())
     controller.tick(21603)
-    disabled = Controller(
-        controller.settings.model_copy(update={"targets": ()}), state, store, chain, provider
-    )
+    disabled = Controller((), state, store, chain, provider)
     controller.tick(22201)
     assert chain.published[-1] == {1: 1.0}
     disabled.tick(22802)
@@ -185,7 +183,7 @@ def test_crash_between_job_creation_and_upload_is_recovered(tmp_path):
     j = provider.jobs[0]
     blob = tmp_path / "artifacts" / "jobs" / j.job_id / "job.json"
     blob.unlink()
-    restarted = Controller(controller.settings, state, store, chain, provider)
+    restarted = Controller(controller.targets, state, store, chain, provider)
     restarted.tick(21601)
     assert blob.exists()
     assert len(provider.rents) == 1
@@ -212,7 +210,7 @@ def test_pending_profile_keeps_frozen_workloads_after_config_change(tmp_path):
     controller.tick(1000)  # Discover and admit without reaching the six-hour trigger.
     changed = t.model_copy(update={"context_length": 4096})
     restarted = Controller(
-        controller.settings.model_copy(update={"targets": (changed,)}),
+        (changed,),
         state,
         store,
         chain,
@@ -224,7 +222,7 @@ def test_pending_profile_keeps_frozen_workloads_after_config_change(tmp_path):
 
 
 def test_refused_rental_frees_the_target_and_retries_under_a_new_identity(tmp_path):
-    from shared.lium import RentalRefused
+    from evaluation.lium_api import RentalRefused
 
     controller, state, store, chain, provider, t = setup_pipeline(tmp_path)
     attempts = []

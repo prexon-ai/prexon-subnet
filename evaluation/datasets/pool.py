@@ -17,8 +17,8 @@ from pydantic import Field
 
 from evaluation.datasets.sources import DatasetSource, PreparationConfig, normalize, source_rows
 from shared.checkpoints import sha256_file
-from shared.config import Digest, FrozenModel, Name, identity
 from shared.datasets import Prompt
+from shared.targets import Digest, FrozenModel, Name, identity
 
 INDEX = struct.Struct(">QQ32s")  # Offset, byte count, SHA-256 of the complete record.
 

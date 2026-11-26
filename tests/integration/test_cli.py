@@ -1,29 +1,47 @@
 import hashlib
 import json
-import subprocess
 import sys
+
+import pytest
 
 from shared.checkpoints import checkpoint_schema
 from shared.contracts import DashboardSnapshot, Qualification
 from tests.factories import make_checkpoint, target
 
 
-def test_idle_controller_runs_without_external_credentials(tmp_path):
-    env = tmp_path / ".env"
-    env.write_text(
-        f"PREXON_STATE_PATH={tmp_path}/state.sqlite\n"
-        f"PREXON_PUBLIC_ARTIFACT_ROOT={tmp_path}/public\n"
-        f"PREXON_UPLOAD_POLICY_PATH={tmp_path}/intake-policy/upload-policy.json\n"
-        "PREXON_MODEL_1_ID=\nPREXON_MODEL_2_ID=\n"
-    )
-    result = subprocess.run(
-        [sys.executable, "-m", "validator.main", "--env-file", str(env), "--once"],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-    )
-    assert result.returncode == 0
+def run_validator(set_config, monkeypatch, tmp_path, *args, **constants):
+    """Run prexon-validator in-process with every runtime path of the config files in tmp."""
+    from validator.main import main
+
+    paths = {
+        "STATE_PATH": tmp_path / "state.sqlite",
+        "ARTIFACT_ROOT": str(tmp_path / "artifacts"),
+        "PUBLIC_ARTIFACT_ROOT": str(tmp_path / "public"),
+        "UPLOAD_POLICY_PATH": tmp_path / "intake-policy/upload-policy.json",
+        "DATASET_CACHE": tmp_path / "datasets",
+        "SSH_KNOWN_HOSTS": tmp_path / "known_hosts",
+        "UPLOAD_STATE_PATH": tmp_path / "api/uploads.sqlite3",
+    }
+    # Pin the values the owner sets in the committed file, so tests stay offline and idle
+    # and never reach the owner's buckets.
+    pinned = {
+        "TARGETS": [],
+        "BURN_UID": 0,
+        "PROVIDER": "local",
+        "UPLOAD_STAGING_ROOT": "",
+        "PUBLIC_ARTIFACT_BASE_URL": "",
+    }
+    set_config(**{**paths, **pinned, **constants})
+    monkeypatch.setattr(sys, "argv", ["prexon-validator", *args])
+    main()
+
+
+def test_idle_controller_runs_without_external_credentials(set_config, tmp_path, monkeypatch):
+    def connect(settings):
+        raise AssertionError("an idle validator never connects to the chain")
+
+    monkeypatch.setattr("validator.chain.connect", connect)
+    run_validator(set_config, monkeypatch, tmp_path, "--once")
     snapshot = DashboardSnapshot.model_validate_json(
         (tmp_path / "public/dashboard/snapshot.json").read_bytes()
     )
@@ -32,22 +50,24 @@ def test_idle_controller_runs_without_external_credentials(tmp_path):
     assert snapshot.emissions[0].share == 1
 
 
-def test_qualification_cli_validates_uploads_and_prints_immutable_id(tmp_path):
+def enabled_target(tmp_path):
     t = target()
     profile = tmp_path / "profile.json"
     profile.write_text(
         json.dumps(t.model_dump(exclude={"slot", "model_id", "revision", "allocation"}))
     )
-    env = tmp_path / ".env"
-    env.write_text(
-        f"PREXON_MODEL_1_ID={t.model_id}\nPREXON_MODEL_1_REVISION={t.revision}\n"
-        f"PREXON_MODEL_1_PROFILE={profile}\nPREXON_ARTIFACT_ROOT={tmp_path}/artifacts\n"
+    entry = {"slot": 1, "model_id": t.model_id, "revision": t.revision, "allocation": 100}
+    return t, [{**entry, "methods": ["dflash2"], "profile": profile}]
+
+
+def test_qualification_cli_validates_uploads_and_prints_immutable_id(
+    set_config, tmp_path, monkeypatch, capsys
+):
+    t, targets = enabled_target(tmp_path)
+    run_validator(
+        set_config, monkeypatch, tmp_path, "--qualification-profile", "1", TARGETS=targets
     )
-    base = [sys.executable, "-m", "validator.main", "--env-file", str(env)]
-    output = subprocess.run(
-        [*base, "--qualification-profile", "1"], check=True, capture_output=True, text=True
-    )
-    assert output.stdout.strip() == t.qualification_identity
+    assert capsys.readouterr().out.strip() == t.qualification_identity
     q = Qualification(
         profile_id=t.qualification_identity,
         engine_version=t.engine_version,
@@ -58,16 +78,17 @@ def test_qualification_cli_validates_uploads_and_prints_immutable_id(tmp_path):
     )
     path = tmp_path / "qualification.json"
     path.write_text(q.model_dump_json())
-    output = subprocess.run(
-        [*base, "--publish-qualification", str(path)], check=True, capture_output=True, text=True
+    run_validator(
+        set_config, monkeypatch, tmp_path, "--publish-qualification", str(path), TARGETS=targets
     )
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    assert output.stdout.strip() == digest
+    assert capsys.readouterr().out.strip() == digest
     assert (tmp_path / "artifacts/objects" / digest).read_bytes() == path.read_bytes()
 
 
-def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(tmp_path, monkeypatch):
-    from shared.config import Settings
+def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(
+    tmp_path, monkeypatch, set_config
+):
     from validator.chain import ChainSnapshot
     from validator.main import main
     from validator.state import State
@@ -89,22 +110,16 @@ def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(tmp_p
         def publish(self, weights):
             published.append(weights)
 
-    settings = Settings(
-        role="validator",
-        netuid=1,
-        state_path=state_path,
-        public_artifact_root=str(tmp_path / "public"),
-        upload_policy_path=tmp_path / "intake-policy/upload-policy.json",
-        artifact_root=str(tmp_path / "artifacts"),
-    )
-    monkeypatch.setattr("validator.main.load_settings", lambda *_: settings)
+    set_config(NETUID=1, STATE_PATH=state_path)
     monkeypatch.setattr("validator.main.BittensorChain", lambda *_: Boundary())
     monkeypatch.setattr(sys, "argv", ["prexon-validator", "--once"])
     main()
     assert published == [{0: 1.0}]
 
 
-def test_requeue_command_returns_set_aside_heads_to_the_queue(tmp_path):
+def test_requeue_command_returns_set_aside_heads_to_the_queue(
+    set_config, tmp_path, monkeypatch, capsys
+):
     from shared.contracts import Decision
     from tests.factories import evidence
     from tests.validator.test_state import admit
@@ -120,15 +135,25 @@ def test_requeue_command_returns_set_aside_heads_to_the_queue(tmp_path):
     state.complete_job(j, evidence(j), unusable, 21602, max_attempts=1)
     state.finish_session(session["id"], 21603)
     state.close()
-    env = tmp_path / ".env"
-    env.write_text(f"PREXON_STATE_PATH={state_path}\nPREXON_MODEL_1_ID=\nPREXON_MODEL_2_ID=\n")
-    result = subprocess.run(
-        [sys.executable, "-m", "validator.main", "--env-file", str(env), "--requeue-stalled"],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=tmp_path,
-    )
-    assert result.stdout.strip() == "Requeued 1 stalled submission(s)"
+    run_validator(set_config, monkeypatch, tmp_path, "--requeue-stalled", STATE_PATH=state_path)
+    assert capsys.readouterr().out.strip() == "Requeued 1 stalled submission(s)"
     row = next(r for r in State(state_path).submissions() if r["id"] == head.identity)
     assert row["status"] == "ready"
+
+
+def test_check_config_runs_without_env_files_from_any_directory(
+    set_config, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.chdir(tmp_path)
+    run_validator(set_config, monkeypatch, tmp_path, "--check-config")
+    assert json.loads(capsys.readouterr().out) == {"targets": []}
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_enabled_targets_need_a_netuid_and_hippius_storage(set_config, tmp_path, monkeypatch):
+    _, targets = enabled_target(tmp_path)
+    with pytest.raises(ValueError, match="Set PREXON_NETUID in .env before enabling models"):
+        run_validator(set_config, monkeypatch, tmp_path, "--once", TARGETS=targets)
+    # No local development chain: enabled targets always mean the live subnet.
+    with pytest.raises(ValueError, match="Live targets require three separate Hippius S3 stores"):
+        run_validator(set_config, monkeypatch, tmp_path, "--once", TARGETS=targets, NETUID=5)

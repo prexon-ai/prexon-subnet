@@ -6,21 +6,18 @@ from types import SimpleNamespace
 import pytest
 
 from evaluation.runner import evaluate
-from shared.config import Settings
 from tests.factories import target, write_profile
 
 
 @pytest.fixture
-def rental(tmp_path, monkeypatch, pod):
+def rental(tmp_path, monkeypatch, pod, set_config):
     from evaluation import lium
 
     head, snapshot, _ = pod
     config = target().model_copy(update={"allocation": 20, "slot": 2})
     private_key = tmp_path / "key"
     private_key.write_text("test-key")
-    settings = Settings(
-        role="validator", targets=(config,), session_seconds=3600, ssh_private_key=private_key
-    )
+    set_config(SESSION_SECONDS=3600, SSH_PRIVATE_KEY=private_key)
     output = tmp_path / "report.json"
     calls = []
     remote = tmp_path / "remote"
@@ -54,7 +51,7 @@ def rental(tmp_path, monkeypatch, pod):
             calls.append("delete")
 
     class Transport:
-        def __init__(self, settings, descriptor, tick):
+        def __init__(self, descriptor, tick):
             self.tick = tick
 
         def run(self, argv, *, source=None, destination=None, limit=0, timeout_seconds=None):
@@ -69,7 +66,7 @@ def rental(tmp_path, monkeypatch, pod):
             elif action == "start":
                 request = json.loads((remote / "input/request.json").read_text())
                 # These are the exact options passed to the real GPU entrypoint.
-                from shared.config import TargetConfig
+                from shared.targets import TargetConfig
 
                 transported = TargetConfig.model_validate(request["target"])
                 assert transported.identity == config.identity
@@ -111,14 +108,14 @@ def rental(tmp_path, monkeypatch, pod):
 
     monkeypatch.setattr(lium, "LiumClient", Provider)
     monkeypatch.setattr(lium, "SshTransport", Transport)
-    return lium, settings, config, head, output, calls, Provider, remote
+    return lium, config, head, output, calls, Provider, remote
 
 
 @pytest.fixture
 def uncertain_cleanup(rental, monkeypatch):
-    lium, settings, config, head, output, calls, provider, remote = rental
+    lium, config, head, output, calls, provider, remote = rental
     output = output.parent / "reports/head/original.json"
-    lium.evaluate_on_lium(settings, config, head, output, api_key="secret", mode="head")
+    lium.evaluate_on_lium(config, head, output, api_key="secret", mode="head")
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state.update(deadline=1000, pod_id=None, cleanup="pending")
@@ -126,12 +123,12 @@ def uncertain_cleanup(rental, monkeypatch):
     calls.clear()
     monkeypatch.setattr(provider, "recover", lambda *args: None)
     monkeypatch.setattr(lium, "time", SimpleNamespace(time=lambda: 4660))
-    return lium, settings, config, head, output, calls, provider, remote
+    return lium, config, head, output, calls, provider, remote
 
 
 def test_rental_transfers_same_profile_returns_evidence_and_deletes_pod(rental):
-    lium, settings, config, head, output, calls, _, _ = rental
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium, config, head, output, calls, _, _ = rental
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.score == pytest.approx(2)
     assert report.authoritative is False
     assert report.backend == "lium"
@@ -142,37 +139,37 @@ def test_rental_transfers_same_profile_returns_evidence_and_deletes_pod(rental):
     journal = json.loads(output.with_suffix(".lium.json").read_text())
     assert '"api_key"' not in json.dumps(journal)
     assert journal["phase"] == "finished"
-    again = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    again = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert again.execution_id == report.execution_id
     assert calls.count("rent") == 1
 
 
 def test_rental_failure_and_cleanup_retry_preserve_report(rental, monkeypatch):
-    lium, settings, config, head, output, calls, provider, _ = rental
+    lium, config, head, output, calls, provider, _ = rental
 
     def fail_delete(self, pod_id):
         raise RuntimeError("temporary provider failure")
 
     monkeypatch.setattr(provider, "delete", fail_delete)
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.score == pytest.approx(2)
     assert report.rental_cleanup == "pending"
     assert json.loads(output.read_text())["score"] == pytest.approx(2)
     monkeypatch.setattr(provider, "delete", lambda *args: calls.append("delete"))
-    assert lium.cleanup_evaluation(settings, output.with_suffix(".lium.json"), api_key="secret")
+    assert lium.cleanup_evaluation(output.with_suffix(".lium.json"), api_key="secret")
     assert calls.count("rent") == 1
 
 
 def test_changed_inputs_are_rejected_on_resume(rental):
-    lium, settings, config, head, output, calls, _, _ = rental
-    lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium, config, head, output, calls, _, _ = rental
+    lium.evaluate_on_lium(config, head, output, api_key="secret")
     with pytest.raises(ValueError, match="inputs"):
-        lium.evaluate_on_lium(settings, config, head, output, api_key="secret", seed="changed")
+        lium.evaluate_on_lium(config, head, output, api_key="secret", seed="changed")
     assert calls.count("rent") == 1
 
 
 def test_invalid_remote_report_is_inconclusive_and_pod_deleted(rental, monkeypatch):
-    lium, settings, config, head, output, calls, _, remote = rental
+    lium, config, head, output, calls, _, remote = rental
     original = lium.SshTransport.run
 
     def stale(self, argv, **kwargs):
@@ -184,20 +181,20 @@ def test_invalid_remote_report_is_inconclusive_and_pod_deleted(rental, monkeypat
         return result
 
     monkeypatch.setattr(lium.SshTransport, "run", stale)
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.assessment == "inconclusive"
     assert report.score is None
     assert calls[-1] == "delete"
 
 
 def test_keyboard_interrupt_still_deletes_owned_pod(rental, monkeypatch):
-    lium, settings, config, head, output, calls, _, _ = rental
+    lium, config, head, output, calls, _, _ = rental
 
     def cancel(*args, **kwargs):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(lium.SshTransport, "run", cancel)
-    result = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    result = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert result.assessment == "inconclusive"
     assert calls[-1] == "delete"
 
@@ -207,51 +204,51 @@ def test_keyboard_interrupt_still_deletes_owned_pod(rental, monkeypatch):
     [{"price": 100}, {"pending_price": 100}, {"spend_to_date": 100}, {"spend_to_date": -1}],
 )
 def test_provider_price_and_spend_bounds_stop_evaluation(rental, monkeypatch, billing):
-    lium, settings, config, head, output, calls, provider, _ = rental
+    lium, config, head, output, calls, provider, _ = rental
     monkeypatch.setattr(
         provider,
         "status",
         lambda *args: {"status": "RUNNING", "ssh_connect_cmd": "ssh root@example", **billing},
     )
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.assessment == "inconclusive"
     assert "start" not in calls
     assert calls[-1] == "delete"
 
 
 def test_ambiguous_rent_recovers_identity_and_deletes_without_renting_again(rental, monkeypatch):
-    lium, settings, config, head, output, calls, provider, _ = rental
+    lium, config, head, output, calls, provider, _ = rental
 
     def lost_response(self, session, request):
         calls.append("rent")
         raise TimeoutError("response lost after provider created rental")
 
     monkeypatch.setattr(provider, "rent", lost_response)
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.assessment == "inconclusive"
     assert report.pod_id == "pod-1"
     assert calls == ["rent", "recover", "delete"]
-    lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert calls.count("rent") == 1
 
 
 def test_crashed_active_run_resumes_same_pod_without_second_rental(rental):
-    lium, settings, config, head, output, calls, _, _ = rental
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium, config, head, output, calls, _, _ = rental
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state.update(phase="active", cleanup="not_applicable", pod_id=None)
     state_path.write_text(json.dumps(state))
     output.unlink()
-    resumed = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    resumed = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert resumed.execution_id == report.execution_id
     assert calls.count("rent") == 1
     assert "recover" in calls
 
 
 def test_uncertain_active_rental_stays_pending_when_provider_cannot_find_it(rental, monkeypatch):
-    lium, settings, config, head, output, calls, provider, _ = rental
-    lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium, config, head, output, calls, provider, _ = rental
+    lium.evaluate_on_lium(config, head, output, api_key="secret")
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state.update(phase="active", cleanup="not_applicable", pod_id=None)
@@ -260,7 +257,7 @@ def test_uncertain_active_rental_stays_pending_when_provider_cannot_find_it(rent
     calls.clear()
     monkeypatch.setattr(provider, "recover", lambda *args: None)
 
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
 
     assert report.assessment == "inconclusive"
     assert report.rental_cleanup == "pending"
@@ -277,11 +274,11 @@ def test_uncertain_active_rental_stays_pending_when_provider_cannot_find_it(rent
 def test_uncertain_cleanup_waits_for_saved_provider_termination_bound(
     uncertain_cleanup, monkeypatch, now, expected, success
 ):
-    lium, settings, _, _, output, _, _, _ = uncertain_cleanup
+    lium, _, _, output, _, _, _ = uncertain_cleanup
     monkeypatch.setattr(lium.time, "time", lambda: now)
     state_path = output.with_suffix(".lium.json")
 
-    assert lium.cleanup_evaluation(settings, state_path, api_key="secret") is success
+    assert lium.cleanup_evaluation(state_path, api_key="secret") is success
     assert json.loads(state_path.read_bytes())["cleanup"] == expected
     assert json.loads(output.read_bytes())["rental_cleanup"] == expected
 
@@ -293,13 +290,13 @@ def test_uncertain_cleanup_waits_for_saved_provider_termination_bound(
 def test_uncertain_cleanup_requires_a_usable_saved_termination_bound(
     uncertain_cleanup, field, value
 ):
-    lium, settings, _, _, output, _, _, _ = uncertain_cleanup
+    lium, _, _, output, _, _, _ = uncertain_cleanup
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state[field] = value
     state_path.write_text(json.dumps(state))
 
-    assert not lium.cleanup_evaluation(settings, state_path, api_key="secret")
+    assert not lium.cleanup_evaluation(state_path, api_key="secret")
     assert json.loads(state_path.read_bytes())["cleanup"] == "pending"
 
 
@@ -307,7 +304,7 @@ def test_uncertain_cleanup_requires_a_usable_saved_termination_bound(
 def test_uncertain_cleanup_keeps_provider_errors_pending_after_termination_bound(
     uncertain_cleanup, monkeypatch, operation
 ):
-    lium, settings, _, _, output, _, provider, _ = uncertain_cleanup
+    lium, _, _, output, _, provider, _ = uncertain_cleanup
     monkeypatch.setattr(provider, "recover", lambda *args: "pod-1")
 
     def unavailable(*args):
@@ -315,18 +312,18 @@ def test_uncertain_cleanup_keeps_provider_errors_pending_after_termination_bound
 
     monkeypatch.setattr(provider, operation, unavailable)
     state_path = output.with_suffix(".lium.json")
-    assert not lium.cleanup_evaluation(settings, state_path, api_key="secret")
+    assert not lium.cleanup_evaluation(state_path, api_key="secret")
     assert json.loads(output.read_bytes())["rental_cleanup"] == "pending"
 
 
 def test_uncertain_cleanup_deletes_a_pod_found_on_a_later_attempt(uncertain_cleanup, monkeypatch):
-    lium, settings, _, _, output, calls, provider, _ = uncertain_cleanup
+    lium, _, _, output, calls, provider, _ = uncertain_cleanup
     monkeypatch.setattr(lium.time, "time", lambda: 4659)
     state_path = output.with_suffix(".lium.json")
-    assert not lium.cleanup_evaluation(settings, state_path, api_key="secret")
+    assert not lium.cleanup_evaluation(state_path, api_key="secret")
 
     monkeypatch.setattr(provider, "recover", lambda *args: "pod-1")
-    assert lium.cleanup_evaluation(settings, state_path, api_key="secret")
+    assert lium.cleanup_evaluation(state_path, api_key="secret")
     assert calls == ["delete"]
     report = json.loads(output.read_bytes())
     assert report["rental_cleanup"] == "deleted"
@@ -334,16 +331,15 @@ def test_uncertain_cleanup_deletes_a_pod_found_on_a_later_attempt(uncertain_clea
 
 
 def test_cli_releases_uncertain_output_directory_only_after_termination_bound(
-    uncertain_cleanup, monkeypatch, capsys
+    uncertain_cleanup, monkeypatch, capsys, set_config
 ):
     import shutil
     import sys
 
     from evaluation.cli import main, unfinished
 
-    lium, settings, config, head, output, calls, _, remote = uncertain_cleanup
-    monkeypatch.setattr("evaluation.cli.load_settings", lambda *args: settings)
-    monkeypatch.setenv("LIUM_API_KEY", "secret")
+    lium, config, head, output, calls, _, remote = uncertain_cleanup
+    set_config(LIUM_API_KEY="secret")
     profile = write_profile(
         output.parents[2] / "local.json",
         head,
@@ -376,29 +372,29 @@ def test_cli_releases_uncertain_output_directory_only_after_termination_bound(
 
 
 def test_expired_run_cleans_up_without_starting_gpu_work(rental, monkeypatch):
-    lium, settings, config, head, output, calls, _, _ = rental
-    lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    lium, config, head, output, calls, _, _ = rental
+    lium.evaluate_on_lium(config, head, output, api_key="secret")
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state.update(phase="active", deadline=1)
     state_path.write_text(json.dumps(state))
     output.unlink()
     calls.clear()
-    result = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    result = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert result.assessment == "inconclusive"
     assert calls == ["delete"]
 
 
 @pytest.mark.parametrize("mode", ["head", "full"])
 def test_saved_evidence_survives_expired_active_rental_recovery(rental, mode):
-    lium, settings, config, head, output, calls, _, _ = rental
-    original = lium.evaluate_on_lium(settings, config, head, output, api_key="secret", mode=mode)
+    lium, config, head, output, calls, _, _ = rental
+    original = lium.evaluate_on_lium(config, head, output, api_key="secret", mode=mode)
     state_path = output.with_suffix(".lium.json")
     state = json.loads(state_path.read_bytes())
     state.update(phase="active", cleanup="not_applicable", deadline=1)
     state_path.write_text(json.dumps(state))
     calls.clear()
-    resumed = lium.evaluate_on_lium(settings, config, head, output, api_key="secret", mode=mode)
+    resumed = lium.evaluate_on_lium(config, head, output, api_key="secret", mode=mode)
     assert resumed.assessment == original.assessment
     assert resumed.measurements == original.measurements
     assert resumed.execution_id == original.execution_id
@@ -409,9 +405,8 @@ def test_saved_evidence_survives_expired_active_rental_recovery(rental, mode):
 
 
 def test_lium_transports_head_mode_without_reference_heads(rental):
-    lium, settings, config, head, output, calls, _, remote = rental
+    lium, config, head, output, calls, _, remote = rental
     result = lium.evaluate_on_lium(
-        settings,
         config,
         head,
         output,
@@ -428,16 +423,16 @@ def test_lium_transports_head_mode_without_reference_heads(rental):
     assert calls[-1] == "delete"
 
 
-def test_missing_ssh_key_is_rejected_before_rental(rental):
-    lium, settings, config, head, output, calls, _, _ = rental
-    settings = settings.model_copy(update={"ssh_private_key": output.parent / "missing"})
+def test_missing_ssh_key_is_rejected_before_rental(rental, set_config):
+    lium, config, head, output, calls, _, _ = rental
+    set_config(SSH_PRIVATE_KEY=output.parent / "missing")
     with pytest.raises(ValueError, match="SSH"):
-        lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+        lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert "rent" not in calls
 
 
 def test_remote_success_claim_without_supporting_evidence_is_rejected(rental, monkeypatch):
-    lium, settings, config, head, output, calls, _, _ = rental
+    lium, config, head, output, calls, _, _ = rental
     original = lium.SshTransport.run
 
     def forged(self, argv, **kwargs):
@@ -449,7 +444,7 @@ def test_remote_success_claim_without_supporting_evidence_is_rejected(rental, mo
         return code
 
     monkeypatch.setattr(lium.SshTransport, "run", forged)
-    result = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    result = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert result.assessment == "inconclusive"
     assert result.score is None
     assert calls[-1] == "delete"
@@ -457,7 +452,7 @@ def test_remote_success_claim_without_supporting_evidence_is_rejected(rental, mo
 
 @pytest.mark.parametrize("expired", [True, False])
 def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
-    rental, tmp_path, monkeypatch, expired
+    rental, tmp_path, monkeypatch, expired, set_config
 ):
     import hashlib
     import time
@@ -465,7 +460,7 @@ def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
     from shared.datasets import RoundPlan
     from tests.evaluation.test_datasets import dataset_target, prepared_pool
 
-    lium, settings, _, head, output, calls, _, remote = rental
+    lium, _, head, output, calls, _, remote = rental
     _, manifest = prepared_pool(tmp_path / "datasets")
     config = dataset_target(manifest)
     request, _ = lium.inputs(
@@ -486,7 +481,7 @@ def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
         "request": {"termination_hours": 1},
     }
     output.with_suffix(".lium.json").write_text(json.dumps(state))
-    settings = settings.model_copy(update={"dataset_cache": tmp_path / "missing-corpus"})
+    set_config(DATASET_CACHE=tmp_path / "missing-corpus")
     original = lium.SshTransport.run
 
     def run(self, argv, **kwargs):
@@ -508,7 +503,7 @@ def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
         return 0
 
     monkeypatch.setattr(lium.SshTransport, "run", run)
-    resumed = lium.evaluate_on_lium(settings, config, head, output, api_key="secret", mode="head")
+    resumed = lium.evaluate_on_lium(config, head, output, api_key="secret", mode="head")
     assert resumed.execution_id == "e" * 32
     if expired:
         assert resumed.assessment == "inconclusive"
@@ -524,9 +519,9 @@ def test_dataset_rental_recovery_uses_frozen_plan_without_original_corpus(
 
 
 def test_refused_rental_leaves_nothing_to_clean_up(rental, monkeypatch):
-    from shared.lium import RentalRefused
+    from evaluation.lium_api import RentalRefused
 
-    lium, settings, config, head, output, calls, provider, _ = rental
+    lium, config, head, output, calls, provider, _ = rental
 
     def refuse(self, session, request):
         calls.append("rent")
@@ -534,7 +529,7 @@ def test_refused_rental_leaves_nothing_to_clean_up(rental, monkeypatch):
 
     monkeypatch.setattr(provider, "rent", refuse)
     monkeypatch.setattr(provider, "recover", lambda *args: None)
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.assessment == "inconclusive"
     # The provider rented nothing, so no rental can be left running or pending.
     assert report.rental_cleanup == "not_applicable"
@@ -543,7 +538,7 @@ def test_refused_rental_leaves_nothing_to_clean_up(rental, monkeypatch):
 
 @pytest.mark.parametrize("status", ["CREATION_FAILED", "BROKEN", "REBOOT_FAILED"])
 def test_pod_that_can_no_longer_run_ends_the_rental_without_waiting(rental, monkeypatch, status):
-    lium, settings, config, head, output, calls, provider, _ = rental
+    lium, config, head, output, calls, provider, _ = rental
 
     class Clock:
         now = 1_000_000.0
@@ -557,7 +552,7 @@ def test_pod_that_can_no_longer_run_ends_the_rental_without_waiting(rental, monk
     clock = Clock()
     monkeypatch.setattr(lium, "time", clock)
     monkeypatch.setattr(provider, "status", lambda *args: {"status": status})
-    report = lium.evaluate_on_lium(settings, config, head, output, api_key="secret")
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert report.assessment == "inconclusive"
     assert calls == ["rent", "delete"]
     assert clock.now - 1_000_000.0 < 30

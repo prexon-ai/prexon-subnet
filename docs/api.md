@@ -6,7 +6,7 @@ only service is a small API that authorizes miners' private uploads.
 
 ## Published files
 
-The validator writes these under its public root (`PREXON_PUBLIC_ARTIFACT_ROOT`).
+The validator writes these under its public root (`PUBLIC_ARTIFACT_ROOT` in `validator/config.py`).
 With `s3://prexon-public` and the public base
 `https://s3.hippius.com/prexon-public`, they are public at
 `https://s3.hippius.com/prexon-public/<object>`.
@@ -26,7 +26,7 @@ upload is retried on the next tick. While the chain is unreachable nothing is
 uploaded and the last copies stay in place.
 
 The website reads the `dashboard/` folder through its `PREXON_DATA_URL` setting.
-With a local public root (the default, `runtime/public/artifacts`) the same files
+With a local public root (for example `runtime/public/artifacts`) the same files
 are written under that directory, and packages have no public address.
 
 Only crowned heads have a public checkpoint and detailed measurements. For every
@@ -70,9 +70,9 @@ pays no rewards.
 ## Upload API
 
 Production base: **`https://prexonai.com/api/v1`**. Local base:
-`http://127.0.0.1:8000/api/v1`. Reverse proxies must preserve `/api`.
+`http://127.0.0.1:8080/api/v1`. Reverse proxies must preserve `/api`.
 
-The validator and upload API share `.env` on one machine:
+The validator and upload API share `.env` and `validator/config.py` on one machine:
 
 ```bash
 uv sync --frozen --extra validator --extra api
@@ -85,28 +85,30 @@ at `/api/openapi.json`. `GET /api/health` checks process liveness.
 
 ## Upload configuration
 
-Set `PREXON_UPLOADS_ENABLED=true` after configuring the three Hippius buckets and
-qualification in the [validator guide](validator.md). Shared storage settings are
-`S3_ENDPOINT_URL=https://s3.hippius.com`, `S3_REGION=decentralized`,
-`S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. Endpoint/region defaults are applied
-when omitted; incompatible values are rejected. The client uses SigV4 and
-path-style addresses.
+Set `UPLOADS_ENABLED = True` in `validator/config.py` after configuring the three
+Hippius buckets and qualification in the [validator guide](validator.md). The
+shared S3 key, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, is in the Validator
+section of `.env`. The client always uses `https://s3.hippius.com`, region
+`decentralized`, SigV4 and path-style addresses.
 
 The controller publishes a private upload policy with fresh subnet ownership,
 accepted competition IDs, and byte limits. The API reads it per request and owns
 a separate replay/quota SQLite file. Neither upload authorization nor successful
 storage upload creates an evaluation queue entry.
 
-| Setting | Default |
+| `validator/config.py` setting | Default |
 | --- | --- |
-| `PREXON_UPLOADS_ENABLED` | `false` |
-| `PREXON_UPLOAD_POLICY_PATH` | `runtime/intake-policy/upload-policy.json` |
-| `PREXON_UPLOAD_STATE_PATH` | `runtime/api/uploads.sqlite3` |
-| `PREXON_UPLOAD_POLICY_MAX_AGE_SECONDS` | 300 |
-| `PREXON_UPLOAD_URL_TTL_SECONDS` | 900 (allowed: 60–3,600) |
-| `PREXON_UPLOAD_REQUEST_MAX_AGE_SECONDS` | 60 |
-| `PREXON_UPLOAD_MAX_REQUESTS_PER_HOUR` | 4 per hotkey |
-| `PREXON_UPLOAD_MAX_BYTES` | 4 GiB + 2 MiB |
+| `UPLOADS_ENABLED` | `False` |
+| `UPLOAD_POLICY_PATH` | `runtime/intake-policy/upload-policy.json` |
+| `UPLOAD_STATE_PATH` | `runtime/api/uploads.sqlite3` |
+| `UPLOAD_POLICY_MAX_AGE_SECONDS` | 300 |
+| `UPLOAD_URL_TTL_SECONDS` | 900 |
+| `UPLOAD_REQUEST_MAX_AGE_SECONDS` | 60 |
+| `UPLOAD_MAX_REQUESTS_PER_HOUR` | 4 per hotkey |
+| `UPLOAD_MAX_BYTES` (in `shared/config.py`) | 4 GiB + 2 MiB |
+| `API_HOST`, `API_PORT` | `127.0.0.1`, 8080; `prexon-api --host` overrides the host |
+
+Paths are inside the checkout's `runtime/` folder.
 
 The effective size ceiling is the smaller of the global and competition limits.
 Persist the API database on local storage and synchronize clocks. API replicas

@@ -10,15 +10,30 @@ import os
 import tempfile
 from typing import TYPE_CHECKING, Any
 
+from evaluation.config import DATASET_CACHE
 from evaluation.datasets.sampling import select_round, validate_plan
+from evaluation.lium_api import FAILED_POD_STATUSES, RentalRefused
 from shared.artifacts import ArtifactStore
-from shared.config import Settings, TargetConfig, read_environment
 from shared.contracts import EvaluationResult, Qualification
 from shared.datasets import RoundContext, RoundPlan
-from shared.lium import FAILED_POD_STATUSES, RentalRefused
+from shared.targets import TargetConfig
 from shared.uploads import UploadPolicy, UploadTarget
 from validator.chain import Chain, ChainSnapshot
 from validator.competition import emission_weights, score_evidence
+from validator.config import (
+    BURN_UID,
+    MAX_EVALUATION_ATTEMPTS,
+    NETUID,
+    NETWORK,
+    PUBLIC_ARTIFACT_BASE_URL,
+    PUBLIC_ARTIFACT_ROOT,
+    PUBLISH_SECONDS,
+    S3_ACCESS_KEY_ID,
+    S3_SECRET_ACCESS_KEY,
+    S3_SESSION_TOKEN,
+    SESSION_MAX_COST,
+    UPLOAD_POLICY_PATH,
+)
 from validator.dashboard import publish_snapshot
 from validator.history import publish_history
 from validator.providers import Provider
@@ -37,7 +52,7 @@ if TYPE_CHECKING:
 class Controller:
     def __init__(
         self,
-        settings: Settings,
+        targets: tuple[TargetConfig, ...],
         state: State,
         store: ArtifactStore,
         chain: Chain,
@@ -46,23 +61,23 @@ class Controller:
         admission: AdmissionService | None = None,
         publications: PublicationService | None = None,
     ) -> None:
-        self.settings, self.state, self.store = settings, state, store
+        self.targets, self.state, self.store = targets, state, store
         self.chain, self.provider = chain, provider
         self.admission, self.publications = admission, publications
         self.public_store = ArtifactStore(
-            settings.public_artifact_root,
-            environment=read_environment(settings.env_file),
+            PUBLIC_ARTIFACT_ROOT,
+            access_key=S3_ACCESS_KEY_ID,
+            secret_key=S3_SECRET_ACCESS_KEY,
+            session_token=S3_SESSION_TOKEN,
         )
         self.snapshot = ChainSnapshot(block=0, commitments=(), owners={})
-        if settings.targets and settings.chain == "bittensor":
-            context = json.dumps(
-                {"network": settings.network, "netuid": settings.netuid}, sort_keys=True
-            )
+        if targets:
+            context = json.dumps({"network": NETWORK, "netuid": NETUID}, sort_keys=True)
             previous = state.metadata("chain_context")
             if previous and previous != context:
                 raise ValueError("Use separate validator state for a different chain/subnet")
             state.set_metadata("chain_context", context)
-        for target in settings.targets:
+        for target in targets:
             state.register_target(target)
 
     def _qualified(self, target: TargetConfig) -> bool:
@@ -78,8 +93,8 @@ class Controller:
 
     def tick(self, now: float) -> None:
         scan_ok = False
-        self.state.touch_models(self.settings.targets, now)
-        if self.settings.targets or self.state.metadata("chain_initialized"):
+        self.state.touch_models(self.targets, now)
+        if self.targets or self.state.metadata("chain_initialized"):
             try:
                 cursor = self.state.metadata("finalized_block")
                 self.snapshot = self.chain.scan(
@@ -91,13 +106,11 @@ class Controller:
             except Exception as exc:
                 log.error("chain_scan_failed error=%s", type(exc).__name__)
             if self.admission is not None:
-                self.admission.pump(self.state, self.store, self.settings, now)
+                self.admission.pump(self.state, self.store, now)
             else:
                 for commitment in self.state.pending_admissions():
                     try:
-                        admit_commitment(
-                            self.state, self.store, commitment, now, settings=self.settings
-                        )
+                        admit_commitment(self.state, self.store, commitment, now)
                     except Exception as exc:
                         log.error(
                             "admission_retry submission=%s error=%s",
@@ -111,10 +124,10 @@ class Controller:
             except Exception as exc:
                 log.error("session_retry session=%s error=%s", session["id"], type(exc).__name__)
         qualified = []
-        enabled = {t.identity: t for t in self.settings.targets}
+        enabled = {t.identity: t for t in self.targets}
         profiles = {
             **enabled,
-            **{t.identity: t for t in self.state.pending_profiles(self.settings.targets)},
+            **{t.identity: t for t in self.state.pending_profiles(self.targets)},
         }
         upload_targets = []
         for profile in profiles.values():
@@ -139,7 +152,7 @@ class Controller:
         if self.provider is not None:
             # Scheduler uses the original per-target allocations and immutable queued profiles.
             for session in claim_due_sessions(
-                self.state, self.settings, now, {t.identity for t in qualified}
+                self.state, self.targets, now, {t.identity for t in qualified}
             ):
                 try:
                     self._advance(session, now)
@@ -154,17 +167,17 @@ class Controller:
             except Exception as exc:
                 scan_ok = False
                 log.error("ownership_refresh_failed error=%s", type(exc).__name__)
-        if scan_ok or not self.settings.targets:
+        if scan_ok or not self.targets:
             self._publish_upload_policy(now, owners, tuple(upload_targets) if scan_ok else ())
         weights = emission_weights(
-            self.state.awards(self.settings.targets),
-            self.settings.targets,
+            self.state.awards(self.targets),
+            self.targets,
             owners,
             now,
-            self.settings.burn_uid,
+            BURN_UID,
         )
         last = float(self.state.metadata("last_weight_publication", "0"))
-        if scan_ok and now - last >= self.settings.publish_seconds:
+        if scan_ok and now - last >= PUBLISH_SECONDS:
             try:
                 self.chain.publish(weights)
                 self.state.set_metadata("last_weight_publication", str(now))
@@ -176,7 +189,7 @@ class Controller:
                     self.state,
                     self.store,
                     self.public_store,
-                    self.settings.public_artifact_base_url,
+                    PUBLIC_ARTIFACT_BASE_URL,
                     now,
                 )
             else:
@@ -184,15 +197,15 @@ class Controller:
                     self.state,
                     self.store,
                     self.public_store,
-                    self.settings.public_artifact_base_url,
+                    PUBLIC_ARTIFACT_BASE_URL,
                     now,
                 )
         except Exception as exc:
             log.error("winner_release_retry error=%s", type(exc).__name__)
         # Rewards depend on who owns each UID. Without a fresh chain read the last
         # published files stay, rather than showing every reward as gone.
-        if scan_ok or not self.settings.targets:
-            public = (self.state, self.public_store, self.settings.targets, owners)
+        if scan_ok or not self.targets:
+            public = (self.state, self.public_store, self.targets, owners)
             try:
                 publish_snapshot(*public, weights, now, self.snapshot.block)
                 publish_history(*public, now, self.snapshot.block)
@@ -207,12 +220,12 @@ class Controller:
     ) -> None:
         policy = UploadPolicy(
             updated_at=now,
-            network=self.settings.network,
-            netuid=self.settings.netuid,
+            network=NETWORK,
+            netuid=NETUID,
             hotkeys=tuple(sorted(set(owners.values()))),
             targets=targets,
         )
-        path = self.settings.upload_policy_path
+        path = UPLOAD_POLICY_PATH
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", delete=False) as temp:
@@ -246,8 +259,7 @@ class Controller:
             raise RuntimeError("Provider unavailable")
         target = self.state.profile(session["profile_id"])
         enabled = any(
-            t.model_id == target.model_id and t.revision == target.revision
-            for t in self.settings.targets
+            t.model_id == target.model_id and t.revision == target.revision for t in self.targets
         )
         if session["state"] == "stopping" or now >= session["deadline"] or not enabled:
             self.stop_session(session, now)
@@ -271,10 +283,10 @@ class Controller:
                 cutoff_block=cutoff,
                 seed_block=seed_block,
                 block_hash=self.chain.block_hash(seed_block),
-                chain=self.settings.network,
-                netuid=self.settings.netuid,
+                chain=NETWORK,
+                netuid=NETUID,
             )
-            plan = select_round(target, self.settings.dataset_cache, context.seed(target.identity))
+            plan = select_round(target, DATASET_CACHE, context.seed(target.identity))
             payload = json.dumps(
                 plan.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
             ).encode()
@@ -313,7 +325,7 @@ class Controller:
             self.stop_session(session, now)
             return
         spend = float(pod.get("spend_to_date", 0))
-        if not math.isfinite(spend) or spend < 0 or spend >= self.settings.session_max_cost:
+        if not math.isfinite(spend) or spend < 0 or spend >= SESSION_MAX_COST:
             self.stop_session(session, now)
             return
         status = str(pod.get("status", "")).lower()
@@ -338,7 +350,7 @@ class Controller:
                         result,
                         decision,
                         now,
-                        max_attempts=self.settings.max_evaluation_attempts,
+                        max_attempts=MAX_EVALUATION_ATTEMPTS,
                     )
                 except ValueError:
                     # Once the budget is spent, an unusable result is the same as none.
@@ -352,9 +364,7 @@ class Controller:
                     return
             if now >= job.deadline:
                 # The whole job budget passed without a result: one failed attempt.
-                outcome = self.state.timeout_job(
-                    job, max_attempts=self.settings.max_evaluation_attempts
-                )
+                outcome = self.state.timeout_job(job, max_attempts=MAX_EVALUATION_ATTEMPTS)
                 if outcome == "stalled":
                     log.warning("submission_stalled submission=%s", job.commitment.identity)
                 self.stop_session(session, now)

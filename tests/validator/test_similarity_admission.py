@@ -79,7 +79,7 @@ def test_public_reference_fingerprint_is_a_duplicate_source(tmp_path):
 
 
 def calibrated_target():
-    from shared.config import SimilarityPolicy
+    from shared.targets import SimilarityPolicy
 
     return target().model_copy(
         update={

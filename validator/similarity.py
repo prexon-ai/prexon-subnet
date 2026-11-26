@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 from pydantic import Field, model_validator
 
 from shared.checkpoints import strict_json
-from shared.config import Digest, FrozenModel, TargetConfig
+from shared.targets import Digest, FrozenModel, TargetConfig
 
 _CHUNK_BYTES = 1024**2
 _MAX_HEADER_BYTES = 16 * 1024**2
