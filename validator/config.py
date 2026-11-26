@@ -21,7 +21,6 @@ WALLET_HOTKEY = _env.get("PREXON_WALLET_HOTKEY") or "default"
 WALLET_PATH = _env.get("PREXON_WALLET_PATH") or "~/.bittensor/wallets"
 S3_ACCESS_KEY_ID = _env.get("S3_ACCESS_KEY_ID") or ""
 S3_SECRET_ACCESS_KEY = _env.get("S3_SECRET_ACCESS_KEY") or ""
-S3_SESSION_TOKEN = _env.get("S3_SESSION_TOKEN") or ""
 
 # Chain ---------------------------------------------------------------------------------
 BURN_UID = 0

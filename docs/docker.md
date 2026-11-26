@@ -21,7 +21,7 @@ Compose refuses to start without them, instead of letting Docker create
 root-owned directories in their place. Set `API_CONTAINER_USER` the same way
 whenever you run `up` again after pulling changes. The container reads its settings
 from the checkout's `validator/config.py`, mounted read-only, and receives only
-the three S3 keys from `.env`. Restart it (`docker compose ... restart api`) after
+the two S3 keys from `.env`. Restart it (`docker compose ... restart api`) after
 editing `validator/config.py`.
 
 | Host mount | Container path / access |
@@ -39,7 +39,7 @@ in the container, which is where the directories above are mounted.
 `/data`. The current image ignores those variables. Started with the old
 `docker run` command, it would never see the upload policy, and its replay database
 would live inside the container and be lost on the next recreate. Replace it with the
-Compose setup above (or the same three mounts and only the three S3 keys).
+Compose setup above (or the same three mounts and only the two S3 keys).
 
 The policy directory must be mounted as a directory because the validator replaces
 the file atomically. API replay state is separate from validator SQLite; keep both

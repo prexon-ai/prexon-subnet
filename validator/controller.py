@@ -30,7 +30,6 @@ from validator.config import (
     PUBLISH_SECONDS,
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
-    S3_SESSION_TOKEN,
     SESSION_MAX_COST,
     UPLOAD_POLICY_PATH,
 )
@@ -68,7 +67,6 @@ class Controller:
             PUBLIC_ARTIFACT_ROOT,
             access_key=S3_ACCESS_KEY_ID,
             secret_key=S3_SECRET_ACCESS_KEY,
-            session_token=S3_SESSION_TOKEN,
         )
         self.snapshot = ChainSnapshot(block=0, commitments=(), owners={})
         if targets:

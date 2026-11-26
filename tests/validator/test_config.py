@@ -26,7 +26,6 @@ VALIDATOR_SECTION = [
     "PREXON_WALLET_PATH",
     "S3_ACCESS_KEY_ID",
     "S3_SECRET_ACCESS_KEY",
-    "S3_SESSION_TOKEN",
 ]
 EVALUATION_SECTION = [
     "LIUM_API_KEY",
@@ -74,14 +73,14 @@ def test_validator_section_of_env_fills_the_validator_config():
 
 def test_empty_validator_section_falls_back_to_defaults():
     # tests/conftest.py blanks every .env key, as an empty .env would.
-    names = ["NETWORK", "NETUID", "WALLET_NAME", "WALLET_HOTKEY", "WALLET_PATH", "S3_SESSION_TOKEN"]
+    names = ["NETWORK", "NETUID", "WALLET_NAME", "WALLET_HOTKEY", "WALLET_PATH", "S3_ACCESS_KEY_ID"]
     assert read("validator.config", names) == {
         "NETWORK": "'finney'",
         "NETUID": "0",
         "WALLET_NAME": "'default'",
         "WALLET_HOTKEY": "'default'",
         "WALLET_PATH": "'~/.bittensor/wallets'",
-        "S3_SESSION_TOKEN": "''",
+        "S3_ACCESS_KEY_ID": "''",
     }
 
 

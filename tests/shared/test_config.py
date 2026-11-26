@@ -50,11 +50,7 @@ def test_compose_api_mounts_config_and_policy_read_only_and_gets_only_s3_secrets
     state = UPLOAD_STATE_PATH.relative_to(ROOT)
     assert mounts[str(PurePosixPath("/app") / policy.parent)] == (root / policy.parent, True)
     assert mounts[str(PurePosixPath("/app") / state.parent)] == (root / state.parent, False)
-    assert set(api["environment"]) == {
-        "S3_ACCESS_KEY_ID",
-        "S3_SECRET_ACCESS_KEY",
-        "S3_SESSION_TOKEN",
-    }
+    assert set(api["environment"]) == {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"}
     assert api["ports"] == ["127.0.0.1:8080:8080"]
     # Docker reports the container unhealthy when /api/health stops answering.
     assert "http://127.0.0.1:8080/api/health" in " ".join(api["healthcheck"]["test"])
@@ -74,7 +70,8 @@ def test_no_leftover_references_to_removed_settings():
         r"prexon(\.example)?\.toml|\[(chain|schedule|storage|rental|api)\] [a-z_]+"
         r'|\bCHAIN_FILE\b|\bchain_file\b|FileChain|chain\.json|CHAIN = "file"'
         r"|load_settings|settings_loader|load_miner_settings|read_environment"
-        r"|S3_ENDPOINT_URL|S3_REGION|\.env\.miner|moved to validator/config\.py"
+        r"|S3_ENDPOINT_URL|S3_REGION|S3_SESSION_TOKEN|session_token"
+        r"|\.env\.miner|moved to validator/config\.py"
     )
     leftovers = [
         str(path.relative_to(root))

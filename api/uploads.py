@@ -17,7 +17,6 @@ from shared.uploads import UploadGrant, UploadPolicy, UploadRequest, submission_
 from validator.config import (
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
-    S3_SESSION_TOKEN,
     UPLOAD_MAX_REQUESTS_PER_HOUR,
     UPLOAD_POLICY_MAX_AGE_SECONDS,
     UPLOAD_POLICY_PATH,
@@ -65,7 +64,6 @@ class UploadService:
                 UPLOAD_STAGING_ROOT,
                 access_key=S3_ACCESS_KEY_ID,
                 secret_key=S3_SECRET_ACCESS_KEY,
-                session_token=S3_SESSION_TOKEN,
             )
         if not self.store.bucket:
             raise self.unavailable()

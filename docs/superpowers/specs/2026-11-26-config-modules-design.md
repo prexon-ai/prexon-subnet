@@ -15,7 +15,8 @@ operator, so values are checked by tests, not at startup. Never over-engineer.
 - `.env` has sections; each machine fills only what it uses.
   - **Validator** (owner's server): `PREXON_NETWORK`, `PREXON_NETUID`,
     `PREXON_WALLET_NAME`, `PREXON_WALLET_HOTKEY`, `PREXON_WALLET_PATH`,
-    `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`.
+    `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (the session token was removed later the
+    same day: Hippius keys are long-lived).
   - **Evaluation** (validator and miners): `LIUM_API_KEY`, `LIUM_TEMPLATE_ID`,
     `LIUM_VOLUME_ID`, `SSH_PRIVATE_KEY`, `SSH_PUBLIC_KEY`.
 - No settings class. Code imports values directly: `from validator.config import POLL_SECONDS`.

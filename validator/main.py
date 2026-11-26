@@ -27,7 +27,6 @@ from validator.config import (
     PUBLIC_ARTIFACT_ROOT,
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
-    S3_SESSION_TOKEN,
     SESSION_MAX_COST,
     STATE_PATH,
     TARGETS,
@@ -72,7 +71,6 @@ def main() -> None:
             ARTIFACT_ROOT,
             access_key=S3_ACCESS_KEY_ID,
             secret_key=S3_SECRET_ACCESS_KEY,
-            session_token=S3_SESSION_TOKEN,
         )
         print(store.put_file(args.publish_qualification))
         return
@@ -123,7 +121,6 @@ def main() -> None:
                 ARTIFACT_ROOT,
                 access_key=S3_ACCESS_KEY_ID,
                 secret_key=S3_SECRET_ACCESS_KEY,
-                session_token=S3_SESSION_TOKEN,
             )
             provider: Provider | None = None
             if targets or state.active_sessions():

@@ -20,7 +20,6 @@ from validator.config import (
     NETWORK,
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
-    S3_SESSION_TOKEN,
     UPLOAD_STAGING_ROOT,
 )
 from validator.similarity import (
@@ -59,7 +58,6 @@ def _candidate_source(
                 UPLOAD_STAGING_ROOT,
                 access_key=S3_ACCESS_KEY_ID,
                 secret_key=S3_SECRET_ACCESS_KEY,
-                session_token=S3_SESSION_TOKEN,
             )
         except ValueError:
             raise AdmissionPending("private_staging_unavailable") from None

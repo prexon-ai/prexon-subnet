@@ -8,11 +8,10 @@ services:
       dockerfile: docker/Dockerfile.api
     # The validator writes the policy with mode 0640, so run as the validator's user.
     user: "${API_CONTAINER_USER:?Set API_CONTAINER_USER to the validator user's uid:gid}"
-    # Settings come from validator/config.py; the container receives only the S3 secrets.
+    # Settings come from validator/config.py; the container receives only the two S3 keys.
     environment:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
-      S3_SESSION_TOKEN: ${S3_SESSION_TOKEN:-}
     # Every source must already exist: otherwise Docker would create it as a
     # root-owned directory. Restart the API after editing validator/config.py.
     volumes:

@@ -55,7 +55,6 @@ class ArtifactStore:
         s3_client: Any = None,
         access_key: str = "",
         secret_key: str = "",
-        session_token: str = "",
     ) -> None:
         self.root = root
         parsed = urlparse(root)
@@ -74,7 +73,6 @@ class ArtifactStore:
                 region_name=HIPPIUS_REGION,
                 aws_access_key_id=access_key,
                 aws_secret_access_key=secret_key,
-                aws_session_token=session_token or None,
                 config=Config(
                     signature_version="s3v4",
                     s3={"addressing_style": "path"},
