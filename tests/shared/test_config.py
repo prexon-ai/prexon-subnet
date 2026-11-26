@@ -56,6 +56,8 @@ def test_compose_api_mounts_config_and_policy_read_only_and_gets_only_s3_secrets
         "S3_SESSION_TOKEN",
     }
     assert api["ports"] == ["127.0.0.1:8080:8080"]
+    # Docker reports the container unhealthy when /api/health stops answering.
+    assert "http://127.0.0.1:8080/api/health" in " ".join(api["healthcheck"]["test"])
     # The validator writes the policy with mode 0640, so the API runs as its user.
     assert api["user"].startswith("${API_CONTAINER_USER:?")
     assert "PREXON_" not in (root / "docker/Dockerfile.api").read_text()
