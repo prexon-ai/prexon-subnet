@@ -2,7 +2,8 @@
 
 Edit the values below, then restart both. The Validator section of `.env` (see
 `.env.example`) supplies the network, netuid, wallet and S3 keys; GPU rentals use
-`evaluation/config.py`. Tests check the committed values.
+`evaluation/config.py`; the competitions are in `competitions/`. Tests check the
+committed values.
 """
 
 import os
@@ -25,29 +26,6 @@ S3_SECRET_ACCESS_KEY = _env.get("S3_SECRET_ACCESS_KEY") or ""
 # Chain ---------------------------------------------------------------------------------
 BURN_UID = 0
 WEIGHTS_VERSION = 1
-
-# Targets -------------------------------------------------------------------------------
-# Up to two. An empty model_id disables a slot. Two enabled slots need allocations that
-# add up to 100, for example 20 and 80. The profile is the target's JSON benchmark
-# profile (see docs/examples/profile.json).
-TARGETS = [
-    {
-        "slot": 1,
-        "model_id": "",
-        "revision": "",
-        "allocation": 100,
-        "methods": ["dflash2"],
-        "profile": ROOT / "profiles/model-1.json",
-    },
-    {
-        "slot": 2,
-        "model_id": "",
-        "revision": "",
-        "allocation": None,
-        "methods": ["dflash2"],
-        "profile": ROOT / "profiles/model-2.json",
-    },
-]
 
 # Schedule ------------------------------------------------------------------------------
 POLL_SECONDS = 30
@@ -94,3 +72,7 @@ UPLOAD_POLICY_MAX_AGE_SECONDS = 300
 UPLOAD_URL_TTL_SECONDS = 900
 UPLOAD_REQUEST_MAX_AGE_SECONDS = 60
 UPLOAD_MAX_REQUESTS_PER_HOUR = 4
+# Largest package upload (4 GiB of checkpoint plus 2 MiB of archive overhead). The API
+# refuses bigger uploads and the validator downloads no more. prexon-miner's default
+# --max-upload-bytes repeats this value.
+UPLOAD_MAX_BYTES = 4 * 1024**3 + 2 * 1024**2

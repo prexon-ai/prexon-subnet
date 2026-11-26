@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -12,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Revision = Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+# A competition is named by its target model, for example "Qwen/Qwen3-8B".
+CompetitionId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][\w.-]*(/[\w.-]+)?$", max_length=200)]
 Positive = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 Name = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
 
@@ -133,9 +134,13 @@ class SimilarityPolicy(FrozenModel):
 
 
 class TargetConfig(FrozenModel):
-    slot: int = Field(ge=1, le=2)
-    model_id: str = Field(min_length=1)
+    """One competition: the target model and the exact benchmark its drafters are measured on."""
+
+    # The competition's public ID is its model ID.
+    model_id: CompetitionId
     revision: Revision
+    # The validator evaluates only active competitions.
+    active: bool
     allocation: float = Field(gt=0, le=100)
     methods: tuple[Literal["dflash2"], ...] = ("dflash2",)
     engine_version: str = Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+(?:[a-z0-9.+-]*)$")
@@ -184,27 +189,49 @@ class TargetConfig(FrozenModel):
         return self
 
     @property
+    def competition_id(self) -> str:
+        return self.model_id
+
+    @property
     def identity(self) -> str:
-        return identity(self)
+        """Internal profile hash: what is measured, not whether or how much it is rewarded."""
+        return identity(self, exclude={"active", "allocation"})
 
     @property
     def qualification_identity(self) -> str:
-        return identity(self.model_copy(update={"qualification_artifact": None}))
+        """What a qualification record names: the profile hash without that record."""
+        return identity(self, exclude={"active", "allocation", "qualification_artifact"})
 
 
-def build_targets(entries: Iterable[Mapping[str, Any]]) -> tuple[TargetConfig, ...]:
-    """Merge each enabled TARGETS entry into its JSON profile; an empty model_id disables it.
+# competitions/ at the root of the checkout, found from the code, not the working folder:
+# shared.json holds the settings every competition shares, and each other file one
+# competition's own settings, laid over them.
+COMPETITIONS_DIR = Path(__file__).resolve().parent.parent / "competitions"
 
-    Tests check the committed entries (slots, models, allocations); nothing is checked here.
-    """
-    targets = []
-    for entry in entries:
-        if not entry["model_id"]:
-            continue
-        data = json.loads(Path(entry["profile"]).read_text())
-        data.update(slot=entry["slot"], model_id=entry["model_id"], revision=entry["revision"])
-        data["allocation"] = 100 if entry["allocation"] is None else entry["allocation"]
-        if entry.get("methods"):
-            data["methods"] = list(entry["methods"])
-        targets.append(TargetConfig.model_validate(data))
-    return tuple(sorted(targets, key=lambda t: t.slot))
+
+def merge(shared: dict[str, Any], own: dict[str, Any]) -> dict[str, Any]:
+    """Lay one competition's settings over the shared ones; nested objects merge."""
+    merged = dict(shared)
+    for key, value in own.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_competitions() -> tuple[TargetConfig, ...]:
+    """Every competition in competitions/, active or not, in file name order."""
+    shared = json.loads((COMPETITIONS_DIR / "shared.json").read_text())
+    return tuple(
+        TargetConfig.model_validate(merge(shared, json.loads(path.read_text())))
+        for path in sorted(COMPETITIONS_DIR.glob("*.json"))
+        if path.name != "shared.json"
+    )
+
+
+def find_competition(model_id: str) -> TargetConfig:
+    for competition in load_competitions():
+        if competition.model_id == model_id:
+            return competition
+    raise ValueError(f"No competition for {model_id} in competitions/")

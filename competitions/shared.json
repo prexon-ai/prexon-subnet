@@ -1,18 +1,10 @@
 {
+  "methods": [
+    "dflash2"
+  ],
   "engine_version": "0.5.23",
   "worker_image": "replace-with-qualified-worker-image@sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "lium_template_id": "",
-  "hardware": {
-    "gpu_type": "H100",
-    "gpu_count": 1,
-    "min_vram_gb": 80,
-    "min_cpus": 8,
-    "min_ram_gb": 64,
-    "min_disk_gb": 200,
-    "max_price_per_gpu_hour": 3,
-    "require_nvlink": false
-  },
-  "tensor_parallel_size": 1,
   "dtype": "bfloat16",
   "context_length": 8192,
   "memory_fraction": 0.8,
@@ -50,10 +42,7 @@
     "max_checkpoint_bytes": 4294967296,
     "max_job_seconds": 7200
   },
-  "public_reference": null,
-  "qualification_artifact": null,
   "datasets": {
-    "manifest": "0000000000000000000000000000000000000000000000000000000000000000",
     "category_weights": {
       "chat": 0.4,
       "code": 0.35,

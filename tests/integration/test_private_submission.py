@@ -90,7 +90,13 @@ def test_signed_upload_chain_similarity_queue_and_winner_release(tmp_path, monke
     digest = submit(
         tmp_path / "head.tar.gz",
         netuid=0,
+        network="finney",
         api_url="https://prexonai.com/api/v1",
+        wallet_name="miner",
+        wallet_hotkey="default",
+        wallet_path="~/.bittensor/wallets",
+        targets=(),
+        max_upload_bytes=4 * 1024**3 + 2 * 1024**2,
         client=httpx.Client(transport=httpx.MockTransport(transport)),
     )
     assert staging.exists(submission_key("finney", 0, hotkey.ss58_address, digest))

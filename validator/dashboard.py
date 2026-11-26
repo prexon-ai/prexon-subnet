@@ -44,8 +44,7 @@ def publish_snapshot(
     sessions = {s["target_key"]: s["state"] for s in state.active_sessions()}
     public_targets = tuple(
         PublicTarget(
-            competition_id=t.identity,
-            slot=t.slot,
+            competition_id=t.competition_id,
             model_id=t.model_id,
             revision=t.revision,
             methods=t.methods,
@@ -67,7 +66,7 @@ def publish_snapshot(
         submissions.append(
             PublicSubmission(
                 submission_id=c.identity,
-                competition_id=row["profile_id"],
+                competition_id=state.profile(row["profile_id"]).competition_id,
                 artifact=c.artifact,
                 hotkey=c.hotkey,
                 uid=c.uid,
@@ -90,7 +89,7 @@ def publish_snapshot(
             PublicEvaluation(
                 job_id=row["id"],
                 submission_id=row["submission_id"],
-                competition_id=result.competition_id,
+                competition_id=measured.competition_id,
                 model_id=measured.model_id,
                 revision=measured.revision,
                 outcome=decision.outcome,
@@ -105,14 +104,15 @@ def publish_snapshot(
     winners = []
     awards = state.awards(targets)
     for target in targets:
-        own = [a for a in awards if a.competition_id == target.identity]
+        own = [a for a in awards if a.profile_id == target.identity]
         for award, share in reward_shares(own, owners, now):
             release = releases.get(award.submission_id)
             if release is None:
                 continue
             winners.append(
                 PublicWinner(
-                    **award.model_dump(),
+                    **award.model_dump(exclude={"profile_id"}),
+                    competition_id=target.competition_id,
                     share=share,
                     checkpoint_url=release.checkpoint_url,
                     published_at=release.published_at,

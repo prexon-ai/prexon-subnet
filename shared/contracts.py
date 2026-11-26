@@ -8,7 +8,7 @@ from pydantic import Field
 
 from shared.datasets import DatasetEvidence, RoundContext
 from shared.releases import WinnerRelease
-from shared.targets import Digest, FrozenModel, Positive, Revision, TargetConfig
+from shared.targets import CompetitionId, Digest, FrozenModel, Positive, Revision, TargetConfig
 
 
 class FileDigest(FrozenModel):
@@ -40,7 +40,7 @@ class SubmissionManifest(FrozenModel):
     schema_version: Literal[1] = 1
     target_id: str = Field(min_length=1)
     target_revision: Revision
-    competition_id: Digest
+    competition_id: CompetitionId
     method: Literal["dflash2"] = "dflash2"
     files: tuple[FileDigest, ...] = Field(min_length=2)
     provenance: Provenance
@@ -138,7 +138,8 @@ class BenchmarkEvidence(FrozenModel):
 class EvaluationResult(BenchmarkEvidence):
     job_id: str
     session_id: str
-    competition_id: Digest
+    # The measured profile's internal hash (TargetConfig.identity).
+    profile_id: Digest
     submission_id: Digest
     incumbent_artifact: Digest | None = None
     round_context: RoundContext | None = None
@@ -154,7 +155,8 @@ class Decision(FrozenModel):
 
 class Award(FrozenModel):
     submission_id: Digest
-    competition_id: Digest
+    # The profile the award was won under (TargetConfig.identity).
+    profile_id: Digest
     hotkey: str
     uid: int
     promoted_at: Positive
@@ -174,8 +176,7 @@ class Qualification(FrozenModel):
 
 
 class PublicTarget(FrozenModel):
-    competition_id: Digest
-    slot: int
+    competition_id: CompetitionId
     model_id: str
     revision: str
     methods: tuple[str, ...]
@@ -188,7 +189,7 @@ class PublicTarget(FrozenModel):
 
 class PublicSubmission(FrozenModel):
     submission_id: Digest
-    competition_id: Digest
+    competition_id: CompetitionId
     artifact: Digest
     hotkey: str
     uid: int
@@ -201,9 +202,7 @@ class PublicSubmission(FrozenModel):
 class PublicEvaluation(FrozenModel):
     job_id: str
     submission_id: Digest
-    # The competition it was scored under; a changed benchmark profile has a new one.
-    competition_id: Digest
-    # The target it measured, which outlasts profile changes.
+    competition_id: CompetitionId
     model_id: str
     revision: str
     outcome: str
@@ -218,7 +217,7 @@ class PublicEvaluation(FrozenModel):
 
 class PublicWinner(FrozenModel):
     submission_id: Digest
-    competition_id: Digest
+    competition_id: CompetitionId
     artifact: Digest
     hotkey: str
     uid: int
@@ -264,7 +263,6 @@ class ModelSummary(FrozenModel):
     id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=96)
     model_id: str
     revision: str
-    slot: int
     active_from: float
     # None while the model is still active.
     active_to: float | None = None

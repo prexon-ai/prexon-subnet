@@ -9,11 +9,13 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 
-from shared.targets import Digest, FrozenModel, Positive
+from shared.targets import CompetitionId, Digest, FrozenModel, Positive, Revision
 
 
 class UploadTarget(FrozenModel):
-    competition_id: Digest
+    competition_id: CompetitionId
+    # The target model revision the competition measures now.
+    revision: Revision
     max_package_bytes: int = Field(gt=0, strict=True)
 
 
@@ -29,7 +31,9 @@ class UploadRequest(FrozenModel):
     hotkey: str = Field(min_length=1, max_length=128)
     network: str = Field(min_length=1, max_length=512)
     netuid: int = Field(ge=0, strict=True)
-    competition_id: Digest
+    competition_id: CompetitionId
+    # The target model revision the package was built for.
+    revision: Revision
     artifact: Digest
     size: int = Field(gt=0, strict=True)
     timestamp: int = Field(gt=0, strict=True)

@@ -15,22 +15,22 @@ storage credentials or the validator's private benchmark profile.
 | --- | --- |
 | `--api-url` | Full versioned API base; default `https://prexonai.com/api/v1` |
 | `--network` | `finney` or `test`; default `finney` |
-| `--netuid` | Supply the actual Prexon subnet ID |
+| `--netuid` | The Prexon subnet ID; required to submit |
 | `--wallet-name`, `--wallet-hotkey` | Both default to `default` |
 | `--wallet-path` | Default `~/.bittensor/wallets` |
 | `--max-upload-bytes` | Compressed upload limit; default 4 GiB + 2 MiB |
-| `--max-checkpoint-bytes` | Local checkpoint limit; default 4 GiB without a profile |
 
 Common connection/wallet options work before or after the subcommand. Miner
-commands take flags only: the defaults are in `miner/config.py` and no `.env` is read
-(`prexon-evaluate` uses the Evaluation section, see [evaluation](evaluation.md)).
-`--profile PATH` supplies a full target profile and `--slot` records its slot. Direct
-training/packaging uses `--model-id` and `--revision`; packaging also requires the
-published `--competition-id`.
+commands take every setting as a flag and read no `.env` (`prexon-evaluate` uses the
+Evaluation section, see [evaluation](evaluation.md)).
 
-In the commands below, supply the real `TARGET_REVISION`, `COMPETITION_ID` and
-`NETUID` values. Revisions are exact 40-character checkpoint commits; competition
-IDs are the validator's published 64-character digests.
+A competition is named by its target model, and the `competitions/` folder in the
+repository holds them all (`shared.json` plus one file per competition); `git pull` before
+training or packaging so yours matches the validator's.
+`uv run prexon-miner competitions` shows each model, its revision, whether it is active
+and its share of emissions. `train` and `package` take `--competition MODEL_ID` and read
+the revision, methods and size limit from the file. An inactive competition can be trained
+and packaged ahead of time; uploads open when it is active. Supply your real `NETUID`.
 
 Adapt a complete upstream SpecForge YAML recipe with `training.strategy: dflash`
 and a draft config declaring `DFlash2DraftModel`. Include dataset identities,
@@ -39,8 +39,7 @@ The wrapper resolves the exact target revision, disables remote code, records th
 resolved recipe, invokes the public trainer, and exports a Hugging Face checkpoint:
 
 ```bash
-uv run prexon-miner train --model-id org/model --revision "$TARGET_REVISION" \
-  --recipe /path/recipe.yaml \
+uv run prexon-miner train --competition Qwen/Qwen3-8B --recipe /path/recipe.yaml \
   --run-dir /path/run --checkpoint /path/run/training/your-saved-checkpoint \
   --output /path/exported-head
 ```
@@ -48,8 +47,6 @@ uv run prexon-miner train --model-id org/model --revision "$TARGET_REVISION" \
 The saved checkpoint path must match the upstream recipe's actual output naming.
 Training errors stop export. Inspect `training-record.json` in the run directory
 and use the resolved recipe hash in your provenance record.
-Training can precede competition selection; its record has no competition ID
-unless supplied by `--competition-id` or a full profile.
 
 Use the standalone evaluator for either miner benchmarking or subnet development:
 
@@ -68,8 +65,7 @@ all placeholders. Packaging permits only the DFlash2 config and safetensors file
 (plus an optional shard index); executable code and pickle formats are rejected.
 
 ```bash
-uv run prexon-miner package --model-id org/model --revision "$TARGET_REVISION" \
-  --competition-id "$COMPETITION_ID" --checkpoint /path/exported-head \
+uv run prexon-miner package --competition Qwen/Qwen3-8B --checkpoint /path/exported-head \
   --provenance /path/provenance.json --output /path/head.tar.gz
 uv run prexon-miner submit /path/head.tar.gz --netuid "$NETUID" \
   --wallet-name miner --wallet-hotkey default --upload-only
@@ -81,8 +77,9 @@ The submit command performs this sequence:
 
 1. Copy the package to private temporary storage and validate its archive, file
    hashes, checkpoint, target/method and configured size limit.
-2. Sign an authorization request binding your hotkey, network/netuid, published
-   competition ID, exact compressed digest/size, timestamp and fresh nonce.
+2. Sign an authorization request binding your hotkey, network/netuid, the
+   competition (its model ID) and revision, exact compressed digest/size, timestamp and
+   fresh nonce. A package for an older revision is refused here, before any upload.
 3. Request a short-lived PUT capability from the API base plus `/uploads`, then
    stream the frozen bytes directly to private Hippius staging with
    the required `application/gzip`, exact `Content-Length` and signed
@@ -112,7 +109,7 @@ failures.
 For local development, pass `--api-url http://127.0.0.1:8080/api/v1`. The URL is the
 versioned base; the client adds only `/uploads`, including when the base ends in `/`.
 
-Uploading creates no ready-queue slot. After discovering your finalized commitment,
+Uploading alone does not add a head to the ready queue. After discovering your finalized commitment,
 the validator reads only your hotkey-scoped staging key, verifies/freezes the bytes,
 and completes CPU qualification and similarity checks. Default target sessions
 become due at **at least 10 ready candidates** or **six hours after the oldest

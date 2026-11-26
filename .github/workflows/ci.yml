@@ -16,7 +16,7 @@ jobs:
       - run: uv run pytest
       - run: uv build
       - run: uv run prexon-validator --check-config
-      - run: uv run prexon-miner targets
+      - run: uv run prexon-miner competitions
       - run: uv run prexon-evaluate --help
       - run: uv run prexon-evaluate prepare-datasets --help
       - run: uv run python -m evaluation --help

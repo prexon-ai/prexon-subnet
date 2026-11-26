@@ -305,7 +305,7 @@ async def interrupted(job, directory, **kwargs):
         await asyncio.sleep(60)
     except asyncio.CancelledError:
         return EvaluationResult(job_id=job.job_id, session_id=job.session_id,
-            competition_id=job.target.identity, submission_id=job.commitment.identity,
+            profile_id=job.target.identity, submission_id=job.commitment.identity,
             status="inconclusive", started_at=time.time(), finished_at=time.time(),
             error_code="CancelledError")
 worker.run_job=interrupted

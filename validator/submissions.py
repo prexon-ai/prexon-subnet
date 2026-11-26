@@ -12,7 +12,6 @@ from pathlib import Path
 
 from shared.artifacts import ArtifactStore, download_url, extract_package
 from shared.checkpoints import validate_checkpoint
-from shared.config import UPLOAD_MAX_BYTES
 from shared.contracts import Commitment, Qualification, SubmissionManifest
 from shared.targets import TargetConfig
 from shared.uploads import submission_key
@@ -20,6 +19,7 @@ from validator.config import (
     NETWORK,
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
+    UPLOAD_MAX_BYTES,
     UPLOAD_STAGING_ROOT,
 )
 from validator.similarity import (
@@ -168,6 +168,10 @@ def prepare_commitment(
             Bucket=source_store.bucket, Key=source_store._key(key)
         )
         authorized_competition = details.get("Metadata", {}).get("prexon-competition-id")
+        # Authorized while active, a competition that is not active now waits, without
+        # downloading the package again on every tick.
+        if authorized_competition is not None and authorized_competition not in profiles:
+            return None
     with tempfile.TemporaryDirectory(prefix="prexon-private-admission-") as temporary:
         directory = Path(temporary)
         package, head = directory / "candidate.tar.gz", directory / "candidate"
@@ -182,7 +186,9 @@ def prepare_commitment(
         target = profiles.get(manifest.competition_id)
         if target is None:
             return None
-        if manifest.competition_id != target.identity or not _matches_target(manifest, target):
+        if manifest.competition_id != target.competition_id or not _matches_target(
+            manifest, target
+        ):
             raise ValueError("Submission does not match its competition")
         if sum(file.size for file in manifest.files) > target.policy.max_checkpoint_bytes:
             raise ValueError("Checkpoint exceeds the competition size limit")
@@ -233,7 +239,7 @@ def prepare_commitment(
                         previous_target.policy.max_checkpoint_bytes,
                     )
                     if (
-                        previous_manifest.competition_id != previous_target.identity
+                        previous_manifest.competition_id != previous_target.competition_id
                         or not _matches_target(previous_manifest, previous_target)
                     ):
                         raise AdmissionPending("historical_similarity_source_invalid")
@@ -316,6 +322,7 @@ def admit_commitment(
     store: ArtifactStore,
     commitment: Commitment,
     now: float,
+    targets: tuple[TargetConfig, ...],
 ) -> None:
     if state.known(commitment.identity) and not state.needs_similarity(commitment.identity):
         state.resolve_admission(commitment, "admitted")
@@ -324,7 +331,7 @@ def admit_commitment(
         prepared = prepare_commitment(
             store,
             commitment,
-            state.registered_profiles(),
+            {t.competition_id: t for t in targets},
             fingerprints=state.fingerprint_bank(),
             allow_canonical_snapshot=state.needs_similarity(commitment.identity),
             historical_sources=state.comparison_sources(),

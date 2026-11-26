@@ -11,7 +11,7 @@ runtime's verification algorithm.
 
 For workload j, Q is complete output tokens divided by the independently measured
 wall time of the full closed batch. Requests run up to the configured concurrency.
-Request latency excludes client-side waiting for a concurrency slot; full batch
+Request latency excludes client-side waiting for a free concurrency place; full batch
 throughput includes it. Warmup and model loading are excluded from steady-state Q.
 Every arm uses the same prompts, request count, output budget, and warmup procedure.
 Dataset workloads use the [pinned general-purpose pools](datasets.md), sampled

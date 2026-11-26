@@ -10,8 +10,6 @@ upload API runs alongside it with the same `.env` and `validator/config.py`.
 ```bash
 uv sync --frozen --extra validator --extra api
 cp .env.example .env
-mkdir -p profiles
-cp docs/examples/profile.json profiles/model-1.json
 ```
 
 `.env` has two sections: Validator (`PREXON_NETWORK`, `finney` or `test`,
@@ -20,13 +18,26 @@ key, used by GPU rentals). Every other setting is a plain value in
 `validator/config.py` (validator and upload API) or `evaluation/config.py` (GPU
 rentals), commented Python files you edit in place. Values are not validated at
 startup; `uv run pytest tests/validator/test_config.py` checks the committed values.
-Two safety checks remain: enabled targets need `PREXON_NETUID` and the three Hippius
-buckets. Configure each
-target as an entry of its `TARGETS` list and leave unused model IDs empty. One enabled target receives allocation 100; two
-allocations must sum to 100. Each target profile pins its revision, engine/image,
-hardware, workloads, policy, and optional public reference. A useful public
-reference is `{"artifact":"PACKAGE_SHA256","method":"dflash2"}`; absent references
-contribute 1.0 to the winning threshold.
+Two safety checks remain: active competitions need `PREXON_NETUID` and the three
+Hippius buckets.
+
+Competitions live in the `competitions/` folder at the repository root, shared with
+miners and the evaluator. `competitions/shared.json` holds what every competition shares:
+methods, engine and worker image, Lium template, workloads, policy, similarity settings,
+the dataset mix and serving settings. Each other file is one competition and holds only
+its own settings: `model_id` (the competition ID), `revision`, `active`, `allocation`,
+`hardware` and `tensor_parallel_size`, its prepared dataset pool (`datasets.manifest`,
+tokenized for that model), and optional `public_reference` and `qualification_artifact`
+(see `docs/examples/competition.json`). A competition file may override any shared
+setting; nested objects merge. Changing `shared.json` changes every competition's
+benchmark, so each one needs a new qualification record. The validator evaluates only
+competitions with `"active": true`, and their allocations must add up to 100 (the config
+tests check it). Files are only added: keep retired models with `"active": false`; a model
+appears once, and a new revision of it edits that file. Competitions are listed in file
+name order. The validator reads the folder at startup, so restart it after an edit, and
+commit and push it so miners can `git pull` it. A useful public reference is
+`{"artifact":"PACKAGE_SHA256","method":"dflash2"}`; absent references contribute 1.0 to
+the winning threshold.
 
 Prepare the [dataset pool](datasets.md), replace placeholder digests, and set
 `PREXON_NETUID` and the wallet in `.env`, and configure the [Hippius/Lium deployment](docker.md). Production
@@ -41,8 +52,8 @@ can be burned; a fresh empty installation needs no chain credentials.
 
 **Upgrading from an all-in-one `.env`.** Old keys in `.env` are ignored, not
 reported. Keep only the keys of `.env.example`, move every other value to its constant
-in the config files (`PREXON_MODEL_{1,2}_*` become `TARGETS` entries) and run the
-config tests. There is no file chain: the validator always reads the Bittensor
+in the config files (`PREXON_MODEL_{1,2}_*` become files in `competitions/`) and
+run the config tests. There is no file chain: the validator always reads the Bittensor
 network in `PREXON_NETWORK`.
 
 ## Qualify and publish a target
@@ -53,12 +64,13 @@ not establish correctness. Generate the exact identities and checkpoint schema:
 
 ```bash
 uv run prexon-validator --check-config
-uv run prexon-validator --qualification-profile 1
+uv run prexon-validator --qualification-profile Qwen/Qwen3-8B
 uv run prexon-miner inspect --checkpoint /path/verified-export --output schema.json
 ```
 
-The first command prints the competition ID; the second prints its qualification
-identity with `qualification_artifact` unset. Create an operator record:
+The first command lists the competitions; the second prints that competition's
+qualification ID (its profile hash, without `active`, `allocation` and
+`qualification_artifact`). Create an operator record:
 
 ```json
 {
@@ -76,8 +88,9 @@ identity with `qualification_artifact` unset. Create an operator record:
 
 Insert the complete generated schema object into `checkpoint_schemas`; an empty
 list is rejected. Include every tensor name, shape, and dtype from verified
-exports. Publish the record, place its returned digest in the target profile's
-`qualification_artifact`, and publish the final competition ID:
+exports. Publish the record, put its returned digest in the competition's
+`qualification_artifact` in its file in `competitions/`, then set `"active": true`. The
+competition ID stays the model ID throughout:
 
 ```bash
 uv run prexon-validator --publish-qualification qualification.json
@@ -121,7 +134,7 @@ must exist at the committing hotkey's staging key, with signed competition
 metadata matching the archive. Hashes, size bounds, qualified config/tensor
 schemas, and CPU similarity are checked before queue admission.
 
-Exact copies receive no new slot or award. Optional near-copy rejection requires
+Exact copies receive no new queue place or award. Optional near-copy rejection requires
 a calibrated `similarity` policy and full-value comparisons after screening.
 Shared embeddings/output heads are excluded from near metrics. Raw cosine does
 not change speedup scores. Missing operator/storage inputs remain pending;

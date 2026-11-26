@@ -20,7 +20,7 @@ def candidate(tmp_path, config, index, *, value=1.0):
         package,
         target_id=config.model_id,
         target_revision=config.revision,
-        competition_id=config.identity,
+        competition_id=config.competition_id,
         provenance=provenance().model_copy(update={"training_description": f"run {index}"}),
     )
     commitment = Commitment(

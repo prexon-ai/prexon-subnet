@@ -45,18 +45,17 @@ target), `emissions` (UID shares, including burn), `submissions` and
 1,000 most recent), and `releases` (every released package with its digest and
 address).
 
-Each evaluation's `competition_id` is the one it was scored under. Changing a
-target's benchmark profile gives it a new competition ID, so evaluations also
-carry the `model_id` and `revision` they measured; match those to a target to
-keep its earlier results.
+A `competition_id` is the competition's target model ID (for example
+`Qwen/Qwen3-8B`); it does not change when the benchmark profile or allocation does.
+Evaluations also carry the `revision` they measured.
 
 ### Model history
 
 `index.json` has `updated_at`, `finalized_block`, and one summary per model: its
-URL-safe `id`, `model_id`, `revision`, `slot`, `active_from`, `active_to` (null
+URL-safe `id`, `model_id`, `revision`, `active_from`, `active_to` (null
 while active), `allocation`, hardware, queue length, evaluated and winner counts,
-`best_speedup`, and the current `reward_shares`. Active models come first; a
-model that left its slot stays listed with the time it was last active.
+`best_speedup`, and the current `reward_shares`. Active models come first, in
+`competitions/` file name order; a retired model stays listed with the time it was last active.
 
 `models/{id}.json` adds the model's `queue` (the head being evaluated first, then
 the rest in the order they will run) and its `submissions`, newest result first.
@@ -105,7 +104,7 @@ storage upload creates an evaluation queue entry.
 | `UPLOAD_URL_TTL_SECONDS` | 900 |
 | `UPLOAD_REQUEST_MAX_AGE_SECONDS` | 60 |
 | `UPLOAD_MAX_REQUESTS_PER_HOUR` | 4 per hotkey |
-| `UPLOAD_MAX_BYTES` (in `shared/config.py`) | 4 GiB + 2 MiB |
+| `UPLOAD_MAX_BYTES` | 4 GiB + 2 MiB |
 | `API_HOST`, `API_PORT` | `127.0.0.1`, 8080; `prexon-api --host` overrides the host |
 
 Paths are inside the checkout's `runtime/` folder.
@@ -123,7 +122,7 @@ read-only so the validator's atomic file replacement remains visible.
 | --- | --- |
 | `hotkey` | Registered SS58 address |
 | `network`, `netuid` | Exact subnet context |
-| `competition_id`, `artifact` | Competition and compressed-package SHA-256 digests |
+| `competition_id`, `artifact` | The competition's model ID and the compressed package's SHA-256 digest |
 | `size`, `timestamp` | Positive byte count and integer epoch UTC seconds |
 | `nonce` | Fresh 16-byte random value as 32 lowercase hex characters |
 | `signature` | 64-byte signature as 128 hex characters; `0x` prefix accepted |

@@ -25,17 +25,17 @@ def test_second_target_can_start_while_first_is_running(tmp_path):
         )
         digest = store.put_bytes(q.model_dump_json().encode())
         t = t.model_copy(update={"qualification_artifact": digest})
-        if t.slot == 1:
+        if t.model_id == first.model_id:
             first = t
         else:
             second = t
     controller = Controller((first, second), state, store, chain, provider)
-    for t in (first, second):
-        admit(state, t, t.slot)
+    for number, t in enumerate((first, second), start=1):
+        admit(state, t, number)
     controller.tick(21600)
     assert len(state.active_sessions()) == 2
     assert len(provider.rents) == 2
-    assert {j.target.slot for j in provider.jobs} == {1, 2}
+    assert {j.target.model_id for j in provider.jobs} == {first.model_id, second.model_id}
 
 
 def test_failed_pod_deletion_retains_session_authority(tmp_path):

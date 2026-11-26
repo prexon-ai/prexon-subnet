@@ -24,7 +24,7 @@ for key in ENV_KEYS:
     os.environ[key] = ""
 
 PACKAGES = {"api", "evaluation", "miner", "shared", "validator"}
-CONFIGS = ("validator.config", "evaluation.config", "shared.config")
+CONFIGS = ("validator.config", "evaluation.config")
 
 
 @pytest.fixture
@@ -46,11 +46,13 @@ def set_config(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def local_config(set_config, tmp_path):
-    """Every test starts on local storage with runtime files in tmp: never the owner's
-    buckets, targets or this checkout's runtime/ folder."""
+def local_config(set_config, tmp_path, tmp_path_factory, monkeypatch):
+    """Every test starts on local storage with runtime files in tmp and an empty competitions
+    folder: never the owner's buckets, competitions or this checkout's runtime/ folder."""
+    competitions = tmp_path_factory.mktemp("competitions")
+    (competitions / "shared.json").write_text("{}")
+    monkeypatch.setattr("shared.targets.COMPETITIONS_DIR", competitions)
     set_config(
-        TARGETS=[],
         STATE_PATH=tmp_path / "state.sqlite",
         ARTIFACT_ROOT=str(tmp_path / "artifacts"),
         UPLOAD_STAGING_ROOT="",

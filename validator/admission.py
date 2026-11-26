@@ -6,6 +6,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from shared.artifacts import ArtifactStore
 from shared.contracts import Commitment
+from shared.targets import TargetConfig
 from validator.state import State
 from validator.submissions import (
     PreparedSubmission,
@@ -22,7 +23,9 @@ class AdmissionService:
         self.commitment: Commitment | None = None
         self.closed = False
 
-    def pump(self, state: State, store: ArtifactStore, now: float) -> None:
+    def pump(
+        self, state: State, store: ArtifactStore, targets: tuple[TargetConfig, ...], now: float
+    ) -> None:
         if self.future is not None:
             if not self.future.done():
                 return
@@ -46,7 +49,8 @@ class AdmissionService:
             state.resolve_admission(commitment, "admitted")
             return
         # Snapshot SQLite-owned inputs before dispatch; workers never receive State.
-        profiles = state.registered_profiles()
+        # A package names its competition by model ID; only active ones admit.
+        profiles = {t.competition_id: t for t in targets}
         fingerprints = state.fingerprint_bank()
         historical_sources = state.comparison_sources()
         self.commitment = commitment

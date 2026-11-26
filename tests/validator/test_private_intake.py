@@ -53,8 +53,9 @@ def setup_intake(
             reference_package,
             target_id=profile.model_id,
             target_revision=profile.revision,
-            competition_id=profile.identity,
-            provenance=provenance(),
+            competition_id=profile.competition_id,
+            # A different note keeps the reference's bytes distinct from the candidate's.
+            provenance=provenance().model_copy(update={"deployment_notes": "Public reference"}),
         )
         reference_artifact = store.put_file(reference_package)
         profile = profile.model_copy(
@@ -84,7 +85,7 @@ def setup_intake(
         package,
         target_id=profile.model_id,
         target_revision=profile.revision,
-        competition_id=profile.identity,
+        competition_id=profile.competition_id,
         provenance=provenance(),
     )
     commitment = Commitment(
@@ -105,7 +106,7 @@ def setup_intake(
         head=head,
         commitment=commitment,
         state_path=tmp_path / "state.sqlite3",
-        profiles={profile.identity: profile},
+        profiles={profile.competition_id: profile},
         key=key,
         reference_artifact=reference_artifact,
     )
@@ -146,7 +147,7 @@ def test_different_approved_layout_is_not_blocked_by_public_reference(tmp_path):
         intake.package,
         target_id=profile.model_id,
         target_revision=profile.revision,
-        competition_id=profile.identity,
+        competition_id=profile.competition_id,
         provenance=provenance(),
     )
     intake.commitment = intake.commitment.model_copy(
@@ -162,26 +163,28 @@ def test_different_approved_layout_is_not_blocked_by_public_reference(tmp_path):
         intake.package,
     )
     intake.profile = profile
-    intake.profiles = {profile.identity: profile}
+    intake.profiles = {profile.competition_id: profile}
     prepared = prepare(intake)
     assert prepared is not None
     assert prepared.fingerprint.scope != prepared.references[intake.reference_artifact].scope
 
 
-@pytest.mark.parametrize("authorization", [None, "different", "matching"])
+@pytest.mark.parametrize("authorization", [None, "other", "inactive", "matching"])
 def test_remote_staging_binds_api_authorized_competition(
     tmp_path, monkeypatch, authorization, set_config
 ):
+    from tests.factories import target
+
     intake = setup_intake(tmp_path)
-    metadata = (
-        {}
-        if authorization is None
-        else {
-            "prexon-competition-id": intake.profile.identity
-            if authorization == "matching"
-            else "f" * 64
-        }
-    )
+    other = target(2)
+    intake.profiles = {intake.profile.competition_id: intake.profile, other.competition_id: other}
+    named = {
+        None: None,
+        "other": other.competition_id,
+        "inactive": "org/retired",
+        "matching": intake.profile.competition_id,
+    }[authorization]
+    metadata = {} if named is None else {"prexon-competition-id": named}
 
     class Hippius:
         def head_object(self, **kwargs):
@@ -192,15 +195,24 @@ def test_remote_staging_binds_api_authorized_competition(
     remote = ArtifactStore("s3://staging", s3_client=Hippius())
     set_config(UPLOAD_STAGING_ROOT=remote.root)
     monkeypatch.setattr("validator.submissions.ArtifactStore", lambda *_args, **_kwargs: remote)
-    monkeypatch.setattr(
-        "validator.submissions._download_package",
-        lambda _store, _key, destination, **_: shutil.copyfile(intake.package, destination),
-    )
+    downloads = []
+
+    def download(_store, _key, destination, **_):
+        downloads.append(destination)
+        shutil.copyfile(intake.package, destination)
+
+    monkeypatch.setattr("validator.submissions._download_package", download)
     if authorization == "matching":
         assert prepare(intake) is not None
+    elif authorization == "inactive":
+        # Authorized while active, its competition is not active now: it waits, and the
+        # package is not downloaded again on every tick.
+        assert prepare(intake) is None
+        assert downloads == []
     else:
         with pytest.raises(ValueError, match="authorized competition"):
             prepare(intake)
+    if authorization != "matching":
         assert not intake.store.exists(f"objects/{intake.commitment.artifact}")
 
 
@@ -310,7 +322,7 @@ def test_synchronous_admission_persists_private_fingerprint_before_ready(tmp_pat
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100)
+        admit_commitment(state, intake.store, intake.commitment, 100, (intake.profile,))
         assert intake.commitment.artifact in state.fingerprint_bank()
         assert state.ready_count(intake.profile.identity) == 1
         assert state.needs_similarity(intake.commitment.identity) is False
@@ -343,10 +355,10 @@ def test_background_worker_does_not_block_chain_polling_or_touch_sqlite(tmp_path
     monkeypatch.setattr("validator.admission.prepare_commitment", blocked)
     service = AdmissionService()
     try:
-        service.pump(state, intake.store, 100)
+        service.pump(state, intake.store, (intake.profile,), 100)
         assert entered.wait(2)
         for _ in range(3):
-            service.pump(state, intake.store, 101)
+            service.pump(state, intake.store, (intake.profile,), 101)
             observed.append("chain scan")
             state.discover((), 102, now=101)
         assert observed == ["chain scan"] * 3
@@ -354,7 +366,7 @@ def test_background_worker_does_not_block_chain_polling_or_touch_sqlite(tmp_path
         release.set()
         # Waiting for worker completion is only a test synchronization boundary.
         service.close()
-        service.pump(state, intake.store, 102)
+        service.pump(state, intake.store, (intake.profile,), 102)
         assert state.ready_count(intake.profile.identity) == 1
         assert intake.commitment.artifact in state.fingerprint_bank()
     finally:
@@ -372,7 +384,7 @@ def test_public_reference_identity_is_screened_before_ready(tmp_path):
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100)
+        admit_commitment(state, intake.store, intake.commitment, 100, (intake.profile,))
         assert intake.reference_artifact in state.fingerprint_bank()
         assert state.ready_count(intake.profile.identity) == 0
         assert state.pending_admissions() == []
@@ -391,8 +403,8 @@ def test_historical_profile_sources_seed_private_bank_before_admission(tmp_path)
         package,
         target_id=previous_profile.model_id,
         target_revision=previous_profile.revision,
-        competition_id=previous_profile.identity,
-        provenance=provenance(),
+        competition_id=previous_profile.competition_id,
+        provenance=provenance().model_copy(update={"deployment_notes": "Earlier submission"}),
     )
     artifact = intake.store.put_file(package)
     prepared = prepare(intake, historical_sources={artifact: previous_profile})
@@ -471,7 +483,7 @@ def test_sync_failures_distinguish_invalid_candidates_from_retryable_inputs(
     try:
         state.register_target(intake.profile)
         state.discover((intake.commitment,), 101, now=100)
-        admit_commitment(state, intake.store, intake.commitment, 100)
+        admit_commitment(state, intake.store, intake.commitment, 100, (intake.profile,))
         assert state.ready_count(intake.profile.identity) == 0
         row = state.connection.execute(
             "SELECT status,reason FROM discoveries WHERE id=?", (intake.commitment.identity,)
@@ -498,14 +510,31 @@ def test_background_missing_object_retry_does_not_starve_next_discovery(tmp_path
     try:
         state.register_target(intake.profile)
         state.discover((missing, intake.commitment), 101, now=100)
-        service.pump(state, intake.store, 100)
+        service.pump(state, intake.store, (intake.profile,), 100)
         assert service.future.result(timeout=5) is None
-        service.pump(state, intake.store, 101)
+        service.pump(state, intake.store, (intake.profile,), 101)
         assert service.future.result(timeout=5).commitment == intake.commitment
         service.close()
-        service.pump(state, intake.store, 102)
+        service.pump(state, intake.store, (intake.profile,), 102)
         assert state.ready_count(intake.profile.identity) == 1
         assert state.pending_admissions(limit=1) == [missing]
     finally:
         service.close()
+        state.close()
+
+
+def test_package_for_an_inactive_competition_waits_for_it(tmp_path):
+    from validator.state import State
+    from validator.submissions import admit_commitment
+
+    intake = setup_intake(tmp_path)
+    state = State(intake.state_path)
+    try:
+        state.register_target(intake.profile)
+        state.discover((intake.commitment,), 101, now=100)
+        admit_commitment(state, intake.store, intake.commitment, 100, ())
+        assert state.pending_admissions() == [intake.commitment]
+        admit_commitment(state, intake.store, intake.commitment, 101, (intake.profile,))
+        assert state.ready_count(intake.profile.identity) == 1
+    finally:
         state.close()

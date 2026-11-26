@@ -22,7 +22,7 @@ def submission(tmp_path, monkeypatch):
         package,
         target_id=configured.model_id,
         target_revision=configured.revision,
-        competition_id=configured.identity,
+        competition_id=configured.competition_id,
         provenance=provenance(),
     )
     options = {
@@ -30,6 +30,10 @@ def submission(tmp_path, monkeypatch):
         "api_url": "https://uploads.example.org/api/v1",
         "network": "finney",
         "netuid": 17,
+        "wallet_name": "miner",
+        "wallet_hotkey": "default",
+        "wallet_path": "~/.bittensor/wallets",
+        "max_upload_bytes": 4 * 1024**3 + 2 * 1024**2,
     }
     signer = Keypair.create_from_uri("//Alice")
     # Wallet access is the signing boundary; signatures themselves are real.
@@ -62,7 +66,7 @@ def submission(tmp_path, monkeypatch):
             assert authorization.hotkey == signer.ss58_address
             assert authorization.network == options["network"]
             assert authorization.netuid == options["netuid"]
-            assert authorization.competition_id == configured.identity
+            assert authorization.competition_id == configured.competition_id
             assert authorization.size == len(state.original)
             assert authorization.artifact == hashlib.sha256(state.original).hexdigest()
             assert Keypair(ss58_address=authorization.hotkey).verify(
@@ -77,7 +81,7 @@ def submission(tmp_path, monkeypatch):
                     "headers": {
                         "Content-Type": "application/gzip",
                         "Content-Length": str(len(state.original)),
-                        "x-amz-meta-prexon-competition-id": configured.identity,
+                        "x-amz-meta-prexon-competition-id": configured.competition_id,
                     },
                     "expires_at": time.time() + 900,
                     "artifact": authorization.artifact,
@@ -88,7 +92,7 @@ def submission(tmp_path, monkeypatch):
         calls.append("upload")
         assert request.headers["Content-Type"] == "application/gzip"
         assert request.headers["Content-Length"] == str(len(state.original))
-        assert request.headers["x-amz-meta-prexon-competition-id"] == configured.identity
+        assert request.headers["x-amz-meta-prexon-competition-id"] == configured.competition_id
         state.uploaded = request.read()
         assert state.uploaded == state.original
         return httpx.Response(state.put_status)
@@ -241,7 +245,7 @@ def test_explicit_checkpoint_bound_rejects_oversized_valid_checkpoint(submission
         submission.package,
         target_id=submission.options["targets"][0].model_id,
         target_revision=submission.options["targets"][0].revision,
-        competition_id=submission.options["targets"][0].identity,
+        competition_id=submission.options["targets"][0].competition_id,
         provenance=provenance(),
     )
     options = {**submission.options, "targets": ()}

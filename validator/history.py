@@ -78,7 +78,6 @@ def _history(
         id=slug,
         model_id=target.model_id,
         revision=target.revision,
-        slot=target.slot if active else period["slot"],
         active_from=period["active_from"],
         active_to=None if active else period["active_to"],
         allocation=target.allocation if active else period["allocation"],
@@ -121,7 +120,7 @@ def build_history(
         shares = {
             award.submission_id: share
             for award, share in reward_shares(
-                [a for a in awards if active and a.competition_id == target.identity], owners, now
+                [a for a in awards if active and a.profile_id == target.identity], owners, now
             )
         }
         histories[slugs[key]] = _history(
@@ -134,9 +133,14 @@ def build_history(
             releases=releases,
             now=now,
         )
+    # Active models in competitions/ file name order, then retired models, most recent first.
+    position = {target_key(t): i for i, t in enumerate(targets)}
     ordered = sorted(
         histories.values(),
-        key=lambda m: (m.active_to is not None, m.slot if m.active_to is None else -m.active_to),
+        key=lambda m: (
+            m.active_to is not None,
+            position.get(f"{m.model_id}@{m.revision}", 0) if m.active_to is None else -m.active_to,
+        ),
     )
     summaries = tuple(
         ModelSummary.model_validate(m.model_dump(include=set(ModelSummary.model_fields)))

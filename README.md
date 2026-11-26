@@ -25,7 +25,8 @@ production use.
    whole allocation goes to its latest winners: one winner takes all of it, two
    split it 70/30, and the three latest split it 50/35/15, newest first.
 
-Up to two targets can run independently, with separate hardware and queues.
+Competitions are files in `competitions/`, each named by its target model. Every
+active one runs independently, with its own hardware, queue and share of emissions.
 See [scoring and emissions](docs/scoring.md) for the formula and reward rules.
 
 ## Quick start
@@ -40,7 +41,7 @@ uv run prexon-validator --once
 uv run prexon-api
 ```
 
-Both target slots are disabled by default. `--once` then publishes an idle dashboard
+No competition is active by default. `--once` then publishes an idle dashboard
 to the public bucket named in `validator/config.py` without chain access or a GPU; it
 needs the Hippius key in `.env`. To try it without Hippius, set `ARTIFACT_ROOT` and
 `PUBLIC_ARTIFACT_ROOT` to local directories and `UPLOAD_STAGING_ROOT = ""`. The local
@@ -63,21 +64,20 @@ Install miner dependencies on the training/submission machine:
 uv sync --frozen --extra miner
 ```
 
-Package an exported head with the actual model revision and published competition
-ID, then submit with your subnet and wallet:
+Package an exported head for a competition in `competitions/` (its model ID), then
+submit with your subnet and wallet:
 
 ```bash
-uv run prexon-miner package \
-  --model-id org/model --revision "$TARGET_REVISION" \
-  --competition-id "$COMPETITION_ID" \
+uv run prexon-miner competitions
+uv run prexon-miner package --competition Qwen/Qwen3-8B \
   --checkpoint /path/to/head --provenance provenance.json --output head.tar.gz
 
 uv run prexon-miner submit head.tar.gz \
   --netuid "$NETUID" --wallet-name miner --wallet-hotkey default
 ```
 
-Miner commands take flags only, with defaults in `miner/config.py`; they read no
-`.env`. The API base defaults to
+Miner commands take every setting as a flag and read no `.env`. The API base
+defaults to
 `https://prexonai.com/api/v1` and can be changed with `--api-url`. Miners need no S3
 credentials. See [training and submission](docs/miner.md) for export, provenance,
 limits, and command options.
@@ -89,7 +89,7 @@ The same evaluator is available to miners and validators:
 ```bash
 mkdir -p profiles
 cp docs/examples/local-evaluation.json profiles/local.json
-# Configure the target, checkpoint path, dataset manifest, and backend first.
+# Set "competition" to a model in competitions/, then the head path and backend.
 uv run prexon-evaluate --profile profiles/local.json
 uv run prexon-evaluate --profile profiles/local.json --mode full
 ```
@@ -111,7 +111,7 @@ require real revisions, image digests, and a prepared dataset manifest.
 | `miner/` | Training, inspection, packaging, and submission |
 | `evaluation/` | Shared benchmark library and standalone CLI |
 | `api/` | Signed upload URLs for miners |
-| `shared/` | Target profiles, contracts, checkpoints, storage, and the shared upload limit |
+| `shared/` | Target profiles, contracts, checkpoints and storage |
 | `docker/` | Upload API and GPU worker images |
 | `tests/` | CPU integration tests and explicit GPU/network checks |
 

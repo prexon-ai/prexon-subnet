@@ -12,11 +12,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from shared.artifacts import ArtifactStore
-from shared.config import UPLOAD_MAX_BYTES
 from shared.uploads import UploadGrant, UploadPolicy, UploadRequest, submission_key
 from validator.config import (
     S3_ACCESS_KEY_ID,
     S3_SECRET_ACCESS_KEY,
+    UPLOAD_MAX_BYTES,
     UPLOAD_MAX_REQUESTS_PER_HOUR,
     UPLOAD_POLICY_MAX_AGE_SECONDS,
     UPLOAD_POLICY_PATH,
@@ -100,6 +100,10 @@ class UploadService:
         )
         if target is None:
             raise HTTPException(403, "Competition does not accept uploads")
+        if request.revision != target.revision:
+            raise HTTPException(
+                403, "Package is for another revision of this competition; git pull competitions/"
+            )
         if request.size > min(target.max_package_bytes, UPLOAD_MAX_BYTES):
             raise HTTPException(413, "Package exceeds upload size limit")
         if not 0 <= now - request.timestamp <= UPLOAD_REQUEST_MAX_AGE_SECONDS:

@@ -26,7 +26,7 @@ async def run_job(
     base: dict[str, Any] = dict(
         job_id=job.job_id,
         session_id=job.session_id,
-        competition_id=job.target.identity,
+        profile_id=job.target.identity,
         submission_id=job.commitment.identity,
         incumbent_artifact=job.incumbent_artifact,
         started_at=started,
@@ -105,7 +105,7 @@ async def run_job(
                 manifest.target_id != job.target.model_id
                 or manifest.target_revision != job.target.revision
                 or manifest.method not in job.target.methods
-                or (arm == "candidate" and manifest.competition_id != job.target.identity)
+                or (arm == "candidate" and manifest.competition_id != job.target.competition_id)
             ):
                 raise ValueError("Artifact target or method mismatch")
             paths[arm] = path

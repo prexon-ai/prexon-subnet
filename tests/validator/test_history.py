@@ -22,7 +22,7 @@ def add_submission(state, private, profile, tmp_path, *, hotkey, uid, block, now
         package,
         target_id=profile.model_id,
         target_revision=profile.revision,
-        competition_id=profile.identity,
+        competition_id=profile.competition_id,
         provenance=provenance(),
     )
     digest = private.put_file(package)
@@ -110,7 +110,7 @@ def test_retired_model_keeps_its_results_but_has_no_queue_or_rewards(tmp_path):
     replacement = target(2)
     state.touch_models((replacement,), 600)
     index, models = build_history(state, (replacement,), owners, 700, 30)
-    # Active models come first; a model that left its slot stays in the list.
+    # Active models come first; a retired model stays in the list.
     assert [m.model_id for m in index.models] == [replacement.model_id, profile.model_id]
     active, past = index.models
     assert (active.active_from, active.active_to, active.evaluated) == (600, None, 0)
@@ -133,7 +133,7 @@ def test_model_retired_before_periods_were_recorded_is_dated_by_its_submissions(
     assert past.model_id == profile.model_id
     # Its first head was submitted at 1 and its last verdict was reached at 207.
     assert (past.active_from, past.active_to) == (1, 207)
-    assert (past.slot, past.allocation, past.evaluated) == (1, 100, 3)
+    assert (past.allocation, past.evaluated) == (100, 3)
 
 
 class Recording(ArtifactStore):
@@ -207,7 +207,7 @@ def test_snapshot_evaluations_name_their_model_so_a_profile_change_keeps_them(tm
     snapshot = publish_snapshot(state, public, (changed,), {1: "winner"}, {1: 1.0}, 300, 20)
     (evaluation,) = snapshot.evaluations
     # Scored under the earlier profile, but still an evaluation of the current target.
-    assert evaluation.competition_id == profile.identity != snapshot.targets[0].competition_id
+    assert evaluation.competition_id == profile.competition_id == snapshot.targets[0].competition_id
     assert (evaluation.model_id, evaluation.revision) == ("org/model1", "a" * 40)
 
 

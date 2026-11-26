@@ -64,6 +64,7 @@ def test_no_leftover_references_to_removed_settings():
     # settings machinery replaced by plain config modules.
     root = Path(__file__).resolve().parents[2]
     files = [root / ".env.example", root / "README.md", *root.glob("docker/*")]
+    files += [*root.glob(".github/workflows/*")]
     for folder in ("api", "evaluation", "miner", "shared", "validator", "docs"):
         files += [p for p in (root / folder).rglob("*") if p.suffix in {".py", ".md"}]
     stale = re.compile(
@@ -71,7 +72,11 @@ def test_no_leftover_references_to_removed_settings():
         r'|\bCHAIN_FILE\b|\bchain_file\b|FileChain|chain\.json|CHAIN = "file"'
         r"|load_settings|settings_loader|load_miner_settings|read_environment"
         r"|S3_ENDPOINT_URL|S3_REGION|S3_SESSION_TOKEN|session_token"
-        r"|\.env\.miner|moved to validator/config\.py"
+        r"|\.env\.miner|moved to validator/config\.py|miner\.config\b|miner/config\.py"
+        r"|shared\.config\b|shared/config\.py"
+        r"|\bslots?\b|\bTARGETS\b|build_targets|--model-id|--competition-id|--slot\b"
+        r"|examples/profile\.json|profiles/model-|prexon-miner targets"
+        r"|competitions\.json|COMPETITIONS_FILE"
     )
     leftovers = [
         str(path.relative_to(root))

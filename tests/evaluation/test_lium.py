@@ -14,7 +14,7 @@ def rental(tmp_path, monkeypatch, pod, set_config):
     from evaluation import lium
 
     head, snapshot, _ = pod
-    config = target().model_copy(update={"allocation": 20, "slot": 2})
+    config = target(2, 20)
     private_key = tmp_path / "key"
     private_key.write_text("test-key")
     set_config(SESSION_SECONDS=3600, SSH_PRIVATE_KEY=private_key)
@@ -133,7 +133,7 @@ def test_rental_transfers_same_profile_returns_evidence_and_deletes_pod(rental):
     assert report.authoritative is False
     assert report.backend == "lium"
     assert report.rental_cleanup == "deleted"
-    assert report.competition_id == config.identity
+    assert report.profile_id == config.identity
     assert calls.count("rent") == 1
     assert calls[-1] == "delete"
     journal = json.loads(output.with_suffix(".lium.json").read_text())

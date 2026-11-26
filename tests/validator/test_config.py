@@ -13,7 +13,6 @@ from validator.config import (
     ARTIFACT_ROOT,
     PUBLIC_ARTIFACT_BASE_URL,
     PUBLIC_ARTIFACT_ROOT,
-    TARGETS,
     UPLOAD_STAGING_ROOT,
 )
 
@@ -112,16 +111,60 @@ def test_env_example_has_the_validator_and_evaluation_sections():
     assert example.index("# Validator") < example.index("# Evaluation")
 
 
-def test_enabled_targets_have_distinct_slots_and_models_and_share_100():
-    slots = [entry["slot"] for entry in TARGETS]
-    assert len(slots) == len(set(slots)) and set(slots) <= {1, 2}
-    enabled = [entry for entry in TARGETS if entry["model_id"]]
-    models = [entry["model_id"] for entry in enabled]
+def test_committed_competitions_have_unique_models_and_active_shares_of_100(monkeypatch):
+    from shared.targets import load_competitions
+
+    monkeypatch.setattr("shared.targets.COMPETITIONS_DIR", ROOT / "competitions")
+    competitions = load_competitions()
+    models = [c.model_id for c in competitions]
     assert len(models) == len(set(models))
-    if enabled:
-        assert sum(100 if e["allocation"] is None else e["allocation"] for e in enabled) == 100
-    for entry in enabled:
-        assert Path(entry["profile"]).is_file(), entry["profile"]
+    active = [c for c in competitions if c.active]
+    if active:
+        assert sum(c.allocation for c in active) == 100
+
+
+def test_the_example_competition_completes_the_shared_settings(tmp_path, monkeypatch):
+    from shared.targets import load_competitions
+
+    shared = ROOT / "competitions/shared.json"
+    (tmp_path / "shared.json").write_text(shared.read_text())
+    (tmp_path / "qwen3-8b.json").write_text((ROOT / "docs/examples/competition.json").read_text())
+    monkeypatch.setattr("shared.targets.COMPETITIONS_DIR", tmp_path)
+    (example,) = load_competitions()
+    assert not example.active
+    assert example.datasets is not None
+    assert example.datasets.buckets  # from shared.json; the manifest is the competition's own
+    assert example.workloads == load_competitions()[0].workloads
+
+
+def test_a_competition_file_overrides_shared_settings_and_keeps_the_rest(tmp_path, monkeypatch):
+    from shared.targets import load_competitions
+    from tests.factories import target
+
+    full = target().model_dump(mode="json")
+    shared = {key: full.pop(key) for key in ("engine_version", "worker_image", "workloads")}
+    shared["policy"] = {"improvement_margin": 0.015, "repeats": 7}
+    (tmp_path / "shared.json").write_text(json.dumps(shared))
+    full["policy"] = {"improvement_margin": 0.02}
+    (tmp_path / "b.json").write_text(json.dumps({**full, "model_id": "org/b"}))
+    (tmp_path / "a.json").write_text(json.dumps({**full, "context_length": 4096}))
+    monkeypatch.setattr("shared.targets.COMPETITIONS_DIR", tmp_path)
+    first, second = load_competitions()
+    assert [first.model_id, second.model_id] == ["org/model1", "org/b"]  # file name order
+    assert (first.policy.improvement_margin, first.policy.repeats) == (0.02, 7)
+    assert (first.context_length, second.context_length) == (4096, 8192)
+    assert first.engine_version == shared["engine_version"]
+
+
+def test_competition_id_is_the_model_and_the_profile_hash_ignores_active_and_allocation():
+    from tests.factories import target
+
+    competition = target()
+    assert competition.competition_id == competition.model_id
+    reweighted = competition.model_copy(update={"active": False, "allocation": 20})
+    assert reweighted.identity == competition.identity
+    assert reweighted.qualification_identity == competition.qualification_identity
+    assert competition.model_copy(update={"draft_tokens": 4}).identity != competition.identity
 
 
 def test_storage_uses_three_different_buckets_and_a_public_https_url():
@@ -149,3 +192,10 @@ def test_only_config_files_read_env():
     for path in code:
         if path.name != "config.py":
             assert not any(f'"{key}"' in path.read_text() for key in keys), path
+
+
+def test_miner_default_upload_limit_matches_the_api_limit():
+    from miner.cli import DEFAULTS
+    from validator.config import UPLOAD_MAX_BYTES
+
+    assert DEFAULTS["max_upload_bytes"] == UPLOAD_MAX_BYTES == 4 * 1024**3 + 2 * 1024**2

@@ -12,8 +12,12 @@ mkdir -p profiles
 cp docs/examples/local-evaluation.json profiles/local.json
 ```
 
-Configure the target, image digest, GPU requirements, head path, and prepared
-[dataset manifest](datasets.md), then run:
+Set `competition` to a model in `competitions/`; its target, image, GPU requirements
+and [dataset manifest](datasets.md) come from there. Then set the head path and backend,
+and run. The example names `Qwen/Qwen3-8B`, the competition in
+`docs/examples/competition.json`; the committed `competitions/` folder has no
+competition yet, so pick a listed one (`uv run prexon-miner competitions`) or copy that
+file into `competitions/` first:
 
 ```bash
 uv run prexon-evaluate --profile profiles/local.json
@@ -31,9 +35,9 @@ uses no saved baseline scores. See [scoring](scoring.md) for comparison rules.
 
 ## Profile settings
 
-The template contains a complete `target` configuration. It does not use the
-validator's `TARGETS`. Paths are relative to the profile file, except `target_path` inside
-a Lium pod, which must be absolute.
+The profile names a `competition` (a model ID in `competitions/`) and measures
+against that competition's benchmark, active or not. Paths are relative to the profile
+file, except `target_path` inside a Lium pod, which must be absolute.
 
 | Field | Purpose / default |
 | --- | --- |

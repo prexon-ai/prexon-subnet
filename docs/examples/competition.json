@@ -1,0 +1,22 @@
+{
+  "model_id": "Qwen/Qwen3-8B",
+  "revision": "0000000000000000000000000000000000000000",
+  "active": false,
+  "allocation": 100,
+  "hardware": {
+    "gpu_type": "H100",
+    "gpu_count": 1,
+    "min_vram_gb": 80,
+    "min_cpus": 8,
+    "min_ram_gb": 64,
+    "min_disk_gb": 200,
+    "max_price_per_gpu_hour": 3,
+    "require_nvlink": false
+  },
+  "tensor_parallel_size": 1,
+  "datasets": {
+    "manifest": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "public_reference": null,
+  "qualification_artifact": null
+}

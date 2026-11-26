@@ -44,7 +44,7 @@ def emission_weights(
     weights: dict[int, float] = defaultdict(float)
     groups: dict[str, list[Award]] = defaultdict(list)
     for award in awards:
-        groups[award.competition_id].append(award)
+        groups[award.profile_id].append(award)
     unassigned = 1.0
     for target in targets:
         for award, fraction in reward_shares(groups[target.identity], owners, now):

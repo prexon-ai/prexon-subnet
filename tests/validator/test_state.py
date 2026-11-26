@@ -28,7 +28,7 @@ def admit(state, t, index, *, submitted_at=0):
     manifest = SubmissionManifest(
         target_id=t.model_id,
         target_revision=t.revision,
-        competition_id=t.identity,
+        competition_id=t.competition_id,
         files=[
             {"path": "config.json", "size": 1, "sha256": f"{index:064x}"},
             {"path": "model.safetensors", "size": 1, "sha256": "e" * 64},

@@ -60,7 +60,7 @@ def test_noisy_gain_requires_confidence():
 def _award(t, i, *, promoted_at=None, uid=None):
     return Award(
         submission_id=f"{i:064x}",
-        competition_id=t.identity,
+        profile_id=t.identity,
         hotkey=f"miner{uid or i}",
         uid=uid or i,
         promoted_at=promoted_at or 100 + i,

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from shared.targets import Digest, FrozenModel, Policy, Revision, TargetConfig
+from shared.targets import FrozenModel, Policy, Revision, TargetConfig
 
 
 class MinerTarget(FrozenModel):
     model_id: str = Field(min_length=1)
     revision: Revision
-    competition_id: Digest | None = None
+    competition_id: str | None = None
     max_checkpoint_bytes: int = Field(default=Policy().max_checkpoint_bytes, ge=1024)
 
     @classmethod
@@ -18,6 +18,6 @@ class MinerTarget(FrozenModel):
         return cls(
             model_id=profile.model_id,
             revision=profile.revision,
-            competition_id=profile.identity,
+            competition_id=profile.competition_id,
             max_checkpoint_bytes=profile.policy.max_checkpoint_bytes,
         )

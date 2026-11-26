@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from evaluation.config import LIUM_API_KEY
 from shared.artifacts import ArtifactStore
 from shared.contracts import Qualification
-from shared.targets import build_targets
+from shared.targets import load_competitions
 from validator.admission import AdmissionService
 from validator.chain import BittensorChain
 from validator.config import (
@@ -29,7 +29,6 @@ from validator.config import (
     S3_SECRET_ACCESS_KEY,
     SESSION_MAX_COST,
     STATE_PATH,
-    TARGETS,
     UPLOAD_STAGING_ROOT,
 )
 from validator.controller import Controller
@@ -41,10 +40,14 @@ from validator.state import State
 def main() -> None:
     parser = argparse.ArgumentParser(description="Prexon validator controller")
     parser.add_argument("--once", action="store_true", help="Run one controller tick")
-    parser.add_argument("--qualification-profile", type=int, choices=[1, 2])
+    parser.add_argument(
+        "--qualification-profile",
+        metavar="MODEL_ID",
+        help="Print the qualification ID of a competition in competitions/",
+    )
     parser.add_argument("--publish-qualification", type=Path)
     parser.add_argument(
-        "--check-config", action="store_true", help="Print the targets and their competition IDs"
+        "--check-config", action="store_true", help="List the competitions in competitions/"
     )
     parser.add_argument(
         "--requeue-stalled",
@@ -52,11 +55,13 @@ def main() -> None:
         help="Return submissions set aside after repeated failed evaluations to the queue",
     )
     args = parser.parse_args()
-    targets = build_targets(TARGETS)
+    competitions = load_competitions()
+    # Only active competitions are evaluated.
+    targets = tuple(c for c in competitions if c.active)
     if args.qualification_profile:
-        target = next((t for t in targets if t.slot == args.qualification_profile), None)
+        target = next((c for c in competitions if c.model_id == args.qualification_profile), None)
         if target is None:
-            parser.error("Selected target slot is disabled")
+            parser.error(f"No competition for {args.qualification_profile} in competitions/")
         print(target.qualification_identity)
         return
     if args.publish_qualification:
@@ -64,9 +69,9 @@ def main() -> None:
         if not any(
             t.qualification_identity == record.profile_id
             and t.engine_version == record.engine_version
-            for t in targets
+            for t in competitions
         ):
-            parser.error("Qualification does not cover a configured target profile")
+            parser.error("Qualification does not cover a competition in competitions/")
         store = ArtifactStore(
             ARTIFACT_ROOT,
             access_key=S3_ACCESS_KEY_ID,
@@ -78,9 +83,9 @@ def main() -> None:
         print(
             json.dumps(
                 {
-                    "targets": [
-                        {"slot": t.slot, "model_id": t.model_id, "competition_id": t.identity}
-                        for t in targets
+                    "competitions": [
+                        {"model_id": c.model_id, "active": c.active, "allocation": c.allocation}
+                        for c in competitions
                     ]
                 },
                 indent=2,
@@ -165,7 +170,7 @@ def main() -> None:
             try:
                 if admission is not None:
                     admission.close()
-                    admission.pump(state, store, time.time())
+                    admission.pump(state, store, targets, time.time())
                 if publications is not None and controller is not None:
                     publications.close()
                     publications.pump(

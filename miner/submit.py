@@ -13,11 +13,9 @@ from urllib.parse import urlsplit
 import httpx
 from pydantic import ValidationError
 
-from miner.config import NETWORK, UPLOAD_API_URL, WALLET_HOTKEY, WALLET_NAME, WALLET_PATH
 from shared.artifacts import extract_package
 from shared.chain import commit_artifact, wallet
 from shared.checkpoints import sha256_file
-from shared.config import UPLOAD_MAX_BYTES
 from shared.http_logging import private_http
 from shared.targets import Policy, TargetConfig
 from shared.uploads import UploadGrant, UploadRequest
@@ -64,13 +62,13 @@ def submit(
     package: Path,
     *,
     netuid: int,
-    network: str = NETWORK,
-    api_url: str = UPLOAD_API_URL,
-    wallet_name: str = WALLET_NAME,
-    wallet_hotkey: str = WALLET_HOTKEY,
-    wallet_path: str = WALLET_PATH,
-    targets: tuple[TargetConfig, ...] = (),
-    max_upload_bytes: int = UPLOAD_MAX_BYTES,
+    network: str,
+    api_url: str,
+    wallet_name: str,
+    wallet_hotkey: str,
+    wallet_path: str,
+    targets: tuple[TargetConfig, ...],
+    max_upload_bytes: int,
     publish: bool = True,
     max_checkpoint_bytes: int | None = None,
     client: httpx.Client | None = None,
@@ -125,6 +123,7 @@ def submit(
             network=network,
             netuid=netuid,
             competition_id=manifest.competition_id,
+            revision=manifest.target_revision,
             artifact=digest,
             size=size,
             timestamp=int(time.time()),

@@ -75,15 +75,15 @@ def _verify_award(state: State, award: Award) -> _PublicationSnapshot:
     row = rows[0]
     commitment = Commitment.model_validate_json(row["commitment"])
     manifest = SubmissionManifest.model_validate_json(row["manifest"])
-    target = state.profile(award.competition_id)
+    target = state.profile(award.profile_id)
     if (
         commitment.identity != award.submission_id
         or commitment.artifact != award.artifact
         or commitment.hotkey != award.hotkey
         or commitment.uid != award.uid
-        or row["profile_id"] != award.competition_id
+        or row["profile_id"] != award.profile_id
         or row["status"] != "won"
-        or manifest.competition_id != target.identity
+        or manifest.competition_id != target.competition_id
         or manifest.target_id != target.model_id
         or manifest.target_revision != target.revision
         or manifest.method not in target.methods
@@ -102,7 +102,7 @@ def _verify_award(state: State, award: Award) -> _PublicationSnapshot:
             and job.target == target
             and evaluation["id"] == job.job_id == result.job_id
             and result.submission_id == award.submission_id
-            and result.competition_id == award.competition_id
+            and result.profile_id == award.profile_id
             and result.status == "complete"
         ):
             return _PublicationSnapshot(

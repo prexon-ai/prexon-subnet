@@ -104,11 +104,11 @@ class Controller:
             except Exception as exc:
                 log.error("chain_scan_failed error=%s", type(exc).__name__)
             if self.admission is not None:
-                self.admission.pump(self.state, self.store, now)
+                self.admission.pump(self.state, self.store, self.targets, now)
             else:
                 for commitment in self.state.pending_admissions():
                     try:
-                        admit_commitment(self.state, self.store, commitment, now)
+                        admit_commitment(self.state, self.store, commitment, now, self.targets)
                     except Exception as exc:
                         log.error(
                             "admission_retry submission=%s error=%s",
@@ -135,7 +135,8 @@ class Controller:
                     if profile.identity in enabled:
                         upload_targets.append(
                             UploadTarget(
-                                competition_id=profile.identity,
+                                competition_id=profile.competition_id,
+                                revision=profile.revision,
                                 max_package_bytes=profile.policy.max_checkpoint_bytes + 2 * 1024**2,
                             )
                         )

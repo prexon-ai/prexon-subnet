@@ -15,7 +15,7 @@ def score_evidence(job: EvaluationJob, result: EvaluationResult) -> Decision:
     if (
         result.job_id != job.job_id
         or result.session_id != job.session_id
-        or result.competition_id != target.identity
+        or result.profile_id != target.identity
         or result.submission_id != job.commitment.identity
         or result.incumbent_artifact != job.incumbent_artifact
     ):

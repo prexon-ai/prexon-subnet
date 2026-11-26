@@ -8,7 +8,7 @@ from miner.cli import main
 from miner.train import train_and_export
 from shared.artifacts import extract_package
 from shared.checkpoints import sha256_file
-from tests.factories import make_checkpoint, provenance, target
+from tests.factories import make_checkpoint, provenance, target, write_competitions
 
 
 @pytest.mark.parametrize("direct", [False, True])
@@ -61,7 +61,7 @@ def test_training_pins_snapshot_and_exports_hf_checkpoint(tmp_path, monkeypatch,
     assert (exported / "model.safetensors").exists()
     record = json.loads((tmp_path / "run/training-record.json").read_text())
     assert record["target_id"] == configured.model_id
-    assert record["competition_id"] == (None if direct else configured.identity)
+    assert record["competition_id"] == (None if direct else configured.competition_id)
 
 
 def test_training_rejects_method_or_remote_code_before_launch(tmp_path):
@@ -106,38 +106,27 @@ def test_failed_training_never_exports(tmp_path, monkeypatch):
     assert not (tmp_path / "export").exists()
 
 
-def test_package_accepts_identity_flags_without_loading_server_dotenv(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".env").write_text("PREXON_MODEL_1_ID=server\nPREXON_MODEL_1_PROFILE=/missing\n")
+def test_package_reads_its_competition_from_competitions_json(tmp_path, monkeypatch, capsys):
+    configured = target()
+    write_competitions(configured)
     head = make_checkpoint(tmp_path / "head")
     record = tmp_path / "provenance.json"
     record.write_text(provenance().model_dump_json())
     output = tmp_path / "head.tar.gz"
+    files = ["--checkpoint", str(head), "--provenance", str(record), "--output", str(output)]
     monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "prexon-miner",
-            "package",
-            "--model-id",
-            "org/model",
-            "--revision",
-            "a" * 40,
-            "--competition-id",
-            "b" * 64,
-            "--checkpoint",
-            str(head),
-            "--provenance",
-            str(record),
-            "--output",
-            str(output),
-        ],
+        sys, "argv", ["prexon-miner", "package", "--competition", configured.model_id, *files]
     )
     main()
     manifest = extract_package(output, tmp_path / "restored", sha256_file(output), 1024**2)
-    assert manifest.target_id == "org/model"
-    assert manifest.target_revision == "a" * 40
-    assert manifest.competition_id == "b" * 64
+    assert manifest.target_id == manifest.competition_id == configured.model_id
+    assert manifest.target_revision == configured.revision
+    monkeypatch.setattr(
+        sys, "argv", ["prexon-miner", "package", "--competition", "org/unknown", *files]
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert "No competition for org/unknown in competitions/" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("before_command", [True, False])
@@ -157,17 +146,33 @@ def test_submit_flags_work_before_or_after_the_command(tmp_path, monkeypatch, be
     assert (kwargs["netuid"], kwargs["network"], kwargs["publish"]) == (17, "test", False)
 
 
-def test_miner_reads_no_env_file_or_prexon_environment(tmp_path, monkeypatch, capsys):
+def test_miner_takes_everything_from_flags_never_env(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("PREXON_NETUID", "99")
     monkeypatch.setenv("PREXON_NETWORK", "test")
     calls = []
     monkeypatch.setattr(
         "miner.submit.submit", lambda *args, **kwargs: calls.append((args, kwargs)) or "a" * 64
     )
-    monkeypatch.setattr(sys, "argv", ["prexon-miner", "submit", str(tmp_path / "head.tar.gz")])
+    package = str(tmp_path / "head.tar.gz")
+    # There is no default subnet: submit needs --netuid, and PREXON_NETUID is ignored.
+    monkeypatch.setattr(sys, "argv", ["prexon-miner", "submit", package])
+    with pytest.raises(SystemExit) as stop:
+        main()
+    assert stop.value.code == 2 and "--netuid" in capsys.readouterr().err
+    monkeypatch.setattr(sys, "argv", ["prexon-miner", "submit", package, "--netuid", "17"])
     main()
-    assert (calls[0][1]["netuid"], calls[0][1]["network"]) == (0, "finney")
-    monkeypatch.setattr(sys, "argv", ["prexon-miner", "targets", "--env-file", ".env"])
+    assert calls[0][1] == {
+        "netuid": 17,
+        "network": "finney",
+        "api_url": "https://prexonai.com/api/v1",
+        "wallet_name": "default",
+        "wallet_hotkey": "default",
+        "wallet_path": "~/.bittensor/wallets",
+        "targets": (),
+        "max_upload_bytes": 4 * 1024**3 + 2 * 1024**2,
+        "publish": True,
+    }
+    monkeypatch.setattr(sys, "argv", ["prexon-miner", "competitions", "--env-file", ".env"])
     with pytest.raises(SystemExit) as stop:
         main()
     assert stop.value.code == 2

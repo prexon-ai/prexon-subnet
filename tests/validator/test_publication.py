@@ -23,7 +23,7 @@ def winning_state(tmp_path):
         package,
         target_id=profile.model_id,
         target_revision=profile.revision,
-        competition_id=profile.identity,
+        competition_id=profile.competition_id,
         provenance=provenance(),
     )
     private = ArtifactStore(str(tmp_path / "private"))
@@ -138,7 +138,7 @@ def test_only_winners_are_published(tmp_path):
             candidate,
             target_id=profile.model_id,
             target_revision=profile.revision,
-            competition_id=profile.identity,
+            competition_id=profile.competition_id,
             provenance=provenance(),
         )
         digest = private.put_file(candidate)
@@ -240,7 +240,7 @@ def add_next_winner(state, private, profile, first_job, tmp_path):
         next_package,
         target_id=profile.model_id,
         target_revision=profile.revision,
-        competition_id=profile.identity,
+        competition_id=profile.competition_id,
         provenance=provenance(),
     )
     digest = private.put_file(next_package)

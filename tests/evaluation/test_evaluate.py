@@ -97,3 +97,33 @@ def test_local_head_is_frozen_while_training_can_update_original_export(tmp_path
     report = asyncio.run(evaluate(target(), head, tmp_path / "logs"))
     assert report.status == "complete"
     assert loaded_hashes == [original_hash] * 5
+
+
+def test_profile_names_a_competition_and_reads_its_target_from_competitions_json(tmp_path):
+    import json
+
+    from evaluation.profile import load_profile
+    from tests.factories import write_competitions
+
+    competition = target(2, 20, active=False)
+    write_competitions(competition)
+    path = tmp_path / "local.json"
+    path.write_text(json.dumps({"competition": competition.model_id, "draft_head": "head"}))
+    assert load_profile(path).target == competition
+    path.write_text(json.dumps({"competition": "org/unknown", "draft_head": "head"}))
+    with pytest.raises(ValueError, match="No competition for org/unknown in competitions/"):
+        load_profile(path)
+
+
+def test_example_evaluation_profile_loads_against_the_example_competition():
+    from pathlib import Path
+
+    import shared.targets
+    from evaluation.profile import load_profile
+
+    root = Path(__file__).resolve().parents[2]
+    folder = shared.targets.COMPETITIONS_DIR
+    (folder / "shared.json").write_text((root / "competitions/shared.json").read_text())
+    (folder / "qwen3-8b.json").write_text((root / "docs/examples/competition.json").read_text())
+    profile = load_profile(root / "docs/examples/local-evaluation.json")
+    assert profile.target.model_id == "Qwen/Qwen3-8B"

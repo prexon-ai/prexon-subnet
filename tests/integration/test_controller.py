@@ -81,7 +81,7 @@ def setup_pipeline(tmp_path, t=None):
         package,
         target_id=t.model_id,
         target_revision=t.revision,
-        competition_id=t.identity,
+        competition_id=t.competition_id,
         provenance=provenance(),
     )
     digest = store.put_file(package)
@@ -191,7 +191,7 @@ def test_incompatible_checkpoint_is_terminally_rejected_before_gpu_rental(tmp_pa
         package,
         target_id=target.model_id,
         target_revision=target.revision,
-        competition_id=target.identity,
+        competition_id=target.competition_id,
         provenance=provenance(),
     )
     digest = store.put_file(package)
@@ -208,7 +208,7 @@ def _raw_package(path, target, files, extra=()):
     manifest = SubmissionManifest(
         target_id=target.model_id,
         target_revision=target.revision,
-        competition_id=target.identity,
+        competition_id=target.competition_id,
         files=[
             {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
             for name, data in sorted(files)

@@ -103,7 +103,7 @@ different serving loads, with published weights.
 
 Set `DATASET_CACHE` in `evaluation/config.py`; the controller and the evaluator both
 use it (default: `runtime/datasets` in the checkout). Changing sources,
-rendering or sampling policy changes the competition identity and requires
+rendering or sampling policy changes the competition's profile hash and requires
 reference remeasurement and runtime qualification. Inline text prompts
 remain available for small smoke tests; dataset workloads never cycle prompts.
 
@@ -116,7 +116,7 @@ work from turning future entropy into an already-known block. New submissions,
 including older late admissions, wait for another round without blocking the
 frozen members. The controller waits until the exact
 `cutoff + seed_block_delay` block is finalized, then combines its hash, chain
-network/netuid and competition identity into a versioned seed. It does not start
+network/netuid and the competition's profile hash into a versioned seed. It does not start
 new dataset rounds while replaying historical chain snapshots.
 
 The controller samples without replacement using SHA-256 counter sampling,

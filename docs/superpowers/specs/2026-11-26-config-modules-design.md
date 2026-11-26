@@ -33,8 +33,10 @@ operator, so values are checked by tests, not at startup. Never over-engineer.
 - `evaluation/config.py` (new): Lium, SSH, the dataset cache and development-round
   defaults, plus the Evaluation section of `.env`. Used by `prexon-evaluate` and by the
   validator's GPU rentals.
-- `shared/config.py`: only values more than one program uses: `UPLOAD_MAX_BYTES`
-  (upload API, miner default, validator download cap).
+- `UPLOAD_MAX_BYTES` (upload API, miner default, validator download cap) lives in
+  `validator/config.py`, and the miner CLI repeats it as its default; a test keeps the two
+  equal. (A `shared/config.py` for it was removed later the same day, as was
+  `miner/config.py`: the miner takes every setting as a flag.)
 - `shared/targets.py`: target profile models and `build_targets`, moved out of
   `shared/config.py` unchanged, so competition IDs do not change.
 - The Lium client and SSH transport move from `shared/` to `evaluation/` and import

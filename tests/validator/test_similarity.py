@@ -14,8 +14,8 @@ from tests.factories import make_checkpoint
 
 def target(**updates):
     value = TargetConfig(
-        slot=1,
         model_id="org/target",
+        active=True,
         revision="a" * 40,
         allocation=100,
         engine_version="0.5.3",
@@ -159,7 +159,9 @@ def test_scope_survives_benchmark_changes_but_not_target_changes(tmp_path):
 
     directory = head(tmp_path, "head", [1, 2])
     before = fingerprint(directory, target())
-    changed_profile = target(context_length=4096, engine_version="0.5.4", allocation=50, slot=2)
+    changed_profile = target(
+        context_length=4096, engine_version="0.5.4", allocation=50, active=False
+    )
     assert fingerprint(directory, changed_profile).scope == before.scope
     for change in ({"model_id": "different/model"}, {"revision": "c" * 40}):
         other = fingerprint(directory, target(**change))

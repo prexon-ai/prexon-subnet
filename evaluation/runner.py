@@ -46,7 +46,7 @@ class LocalEvaluationReport(BenchmarkEvidence):
     rental_cleanup: Literal["not_applicable", "deleted", "pending", "expiry_unconfirmed"] = (
         "not_applicable"
     )
-    competition_id: Digest
+    profile_id: Digest
     target_id: str
     target_revision: str
     target_source: Literal["pinned_cache", "local_override"]
@@ -139,7 +139,7 @@ async def evaluate(
     base = dict(
         **evidence.model_dump(),
         mode=mode,
-        competition_id=target.identity,
+        profile_id=target.identity,
         target_id=target.model_id,
         target_revision=target.revision,
         target_source="local_override" if target_path else "pinned_cache",

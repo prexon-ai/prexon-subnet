@@ -180,7 +180,7 @@ class State:
         full_matches: dict[str, SimilarityComparison] | None = None,
     ) -> None:
         if (
-            manifest.competition_id != target.identity
+            manifest.competition_id != target.competition_id
             or manifest.target_id != target.model_id
             or manifest.target_revision != target.revision
             or manifest.method not in target.methods
@@ -682,7 +682,7 @@ class State:
                 result.job_id != job.job_id
                 or result.session_id != job.session_id
                 or result.submission_id != job.commitment.identity
-                or result.competition_id != job.target.identity
+                or result.profile_id != job.target.identity
             ):
                 raise ValueError("Result identity is stale")
             # Evidence finished within the job's budget may be read after it.
@@ -713,7 +713,7 @@ class State:
             if decision.outcome == "won":
                 award = Award(
                     submission_id=job.commitment.identity,
-                    competition_id=job.target.identity,
+                    profile_id=job.target.identity,
                     hotkey=job.commitment.hotkey,
                     uid=job.commitment.uid,
                     promoted_at=now,
@@ -741,7 +741,7 @@ class State:
         current = {target_key(t): t.identity for t in targets}
         return [
             Award.model_validate_json(r["award"]).model_copy(
-                update={"competition_id": current[r["target_key"]]}
+                update={"profile_id": current[r["target_key"]]}
             )
             for r in rows
             if r["target_key"] in current
@@ -862,7 +862,6 @@ class State:
                 period = {
                     "active_from": known.get("active_from", now),
                     "active_to": now,
-                    "slot": target.slot,
                     "allocation": target.allocation,
                 }
                 self.set_metadata(key, json.dumps(period, sort_keys=True))
@@ -879,7 +878,6 @@ class State:
         return {
             "active_from": min(seen, default=now),
             "active_to": max(seen, default=now),
-            "slot": target.slot,
             "allocation": target.allocation,
         }
 

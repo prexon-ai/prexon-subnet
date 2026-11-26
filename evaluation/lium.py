@@ -211,7 +211,7 @@ def _validate_report(report: LocalEvaluationReport, state: dict[str, Any]) -> No
     if (
         report.mode != request["mode"]
         or report.execution_id != state["id"]
-        or report.competition_id != target.identity
+        or report.profile_id != target.identity
         or report.target_id != target.model_id
         or report.target_revision != target.revision
         or report.seed != request["seed"]
@@ -443,7 +443,7 @@ def evaluate_on_lium(
                     decision=None
                     if mode == "head"
                     else Decision(outcome="inconclusive", reason="incomplete_or_expired_evidence"),
-                    competition_id=target.identity,
+                    profile_id=target.identity,
                     target_id=target.model_id,
                     started_at=state["started_at"],
                     finished_at=time.time(),

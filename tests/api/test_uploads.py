@@ -15,7 +15,8 @@ from validator.config import UPLOAD_URL_TTL_SECONDS
 NOW = 1_800_000_000
 ALICE = Keypair.create_from_uri("//Alice")
 BOB = Keypair.create_from_uri("//Bob")
-COMPETITION = "a" * 64
+COMPETITION = "Qwen/Qwen3-8B"
+REVISION = "a" * 40
 ARTIFACT = "b" * 64
 
 
@@ -36,6 +37,7 @@ def request_body(*, key=ALICE, nonce="0" * 32, **changes):
         network="finney",
         netuid=17,
         competition_id=COMPETITION,
+        revision=REVISION,
         artifact=ARTIFACT,
         size=4096,
         timestamp=NOW,
@@ -56,7 +58,9 @@ def write_policy(path, **changes):
         network="finney",
         netuid=17,
         hotkeys=(ALICE.ss58_address,),
-        targets=(UploadTarget(competition_id=COMPETITION, max_package_bytes=8192),),
+        targets=(
+            UploadTarget(competition_id=COMPETITION, revision=REVISION, max_package_bytes=8192),
+        ),
     ).model_copy(update=changes)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(policy.model_dump_json())
@@ -343,13 +347,21 @@ def test_tampering_with_registered_hotkey_or_allowed_competition_invalidates_sig
         upload_env.policy_path,
         hotkeys=(ALICE.ss58_address, BOB.ss58_address),
         targets=(
-            UploadTarget(competition_id=COMPETITION, max_package_bytes=8192),
-            UploadTarget(competition_id="c" * 64, max_package_bytes=8192),
+            UploadTarget(competition_id=COMPETITION, revision=REVISION, max_package_bytes=8192),
+            UploadTarget(competition_id="org/other", revision=REVISION, max_package_bytes=8192),
         ),
     )
     client = upload_env.app()
-    for field, value in [("hotkey", BOB.ss58_address), ("competition_id", "c" * 64)]:
+    for field, value in [("hotkey", BOB.ss58_address), ("competition_id", "org/other")]:
         body = request_body()
         body[field] = value
         assert client.post("/api/v1/uploads", json=body).status_code == 401
+    assert upload_env.presigner.calls == []
+
+
+def test_upload_for_another_revision_is_refused_before_any_upload(upload_env):
+    # A miner whose competitions/ is older than the validator's: nothing is presigned.
+    response = upload_env.app().post("/api/v1/uploads", json=request_body(revision="b" * 40))
+    assert response.status_code == 403
+    assert "revision" in response.json()["detail"]
     assert upload_env.presigner.calls == []

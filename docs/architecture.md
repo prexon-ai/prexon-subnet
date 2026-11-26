@@ -48,7 +48,7 @@ speedup.
 
 ## Scheduling and recovery
 
-Each of the two optional target slots has its own queue, GPU requirements,
+Each active competition in `competitions/` has its own queue, GPU requirements,
 incumbent, and emission allocation. A session starts at 10 ready submissions or
 six hours after the oldest unevaluated ready commitment. Original chain/discovery
 age survives retries. A submission whose evaluations repeatedly end without a

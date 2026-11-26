@@ -52,10 +52,10 @@ def provenance():
     )
 
 
-def target(slot=1, allocation=100):
+def target(model=1, allocation=100, active=True):
     return TargetConfig(
-        slot=slot,
-        model_id=f"org/model{slot}",
+        model_id=f"org/model{model}",
+        active=active,
         revision="a" * 40,
         allocation=allocation,
         engine_version="0.5.23",
@@ -129,7 +129,7 @@ def evidence(j, candidate=2, incumbent=None):
     return EvaluationResult(
         job_id=j.job_id,
         session_id=j.session_id,
-        competition_id=j.target.identity,
+        profile_id=j.target.identity,
         submission_id=j.commitment.identity,
         incumbent_artifact=j.incumbent_artifact,
         status="complete",
@@ -151,9 +151,39 @@ def evidence(j, candidate=2, incumbent=None):
     )
 
 
+def write_competitions(*competitions):
+    """Make these the competitions the tests read: one file each in a tmp competitions folder."""
+    import shared.targets
+
+    folder = shared.targets.COMPETITIONS_DIR
+    for path in folder.glob("*.json"):
+        if path.name != "shared.json":
+            path.unlink()
+    for number, competition in enumerate(competitions, start=1):
+        add_competition(competition.model_dump(mode="json"), name=f"{number:02d}")
+
+
+def add_competition(entry, name=None):
+    """Add or replace one competition file (named after its model unless given a name)."""
+    import shared.targets
+
+    folder = shared.targets.COMPETITIONS_DIR
+    name = name or entry["model_id"].replace("/", "--")
+    for path in folder.glob("*.json"):
+        if (
+            path.name != "shared.json"
+            and json.loads(path.read_text())["model_id"] == entry["model_id"]
+        ):
+            path.unlink()
+    (folder / f"{name}.json").write_text(json.dumps(entry))
+
+
 def write_profile(path, head, **updates):
+    """An evaluation profile naming its competition, which is added to the competitions file."""
+    competition = updates.pop("target", None) or target().model_dump(mode="json")
+    add_competition(competition)
     data = {
-        "target": target().model_dump(mode="json"),
+        "competition": competition["model_id"],
         "draft_head": str(head),
         "backend": "pod",
         "output_dir": "reports",

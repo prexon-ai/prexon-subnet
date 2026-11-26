@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, model_validator
 
-from shared.targets import FrozenModel, Positive, TargetConfig
+from shared.targets import FrozenModel, Positive, TargetConfig, find_competition
 
 EvaluationMode = Literal["head", "full"]
 
@@ -38,7 +39,12 @@ class EvaluationProfile(FrozenModel):
 
 
 def load_profile(path: Path) -> EvaluationProfile:
-    profile = EvaluationProfile.model_validate_json(path.read_bytes())
+    """A profile names a competition; its target comes from competitions/."""
+    data = json.loads(path.read_bytes())
+    if not isinstance(data, dict) or not isinstance(data.get("competition"), str):
+        raise ValueError('An evaluation profile names its "competition" (a model ID)')
+    data["target"] = find_competition(data.pop("competition"))
+    profile = EvaluationProfile.model_validate(data)
     base = path.resolve().parent
     updates: dict[str, Path] = {}
     for field in ("draft_head", "baseline_head", "incumbent_head", "output_dir", "target_path"):
