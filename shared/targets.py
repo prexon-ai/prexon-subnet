@@ -39,10 +39,11 @@ class Hardware(FrozenModel):
 
 
 class LengthBucket(FrozenModel):
+    """A prompt length range in the target's tokens; the mix says how many to draw."""
+
     name: Name
     min_tokens: int = Field(ge=1)
     max_tokens: int = Field(ge=1)
-    weight: Positive
 
     @model_validator(mode="after")
     def valid_range(self) -> LengthBucket:
@@ -52,10 +53,18 @@ class LengthBucket(FrozenModel):
 
 
 DEFAULT_BUCKETS = (
-    LengthBucket(name="short", min_tokens=1, max_tokens=512, weight=0.3),
-    LengthBucket(name="medium", min_tokens=513, max_tokens=2048, weight=0.4),
-    LengthBucket(name="long", min_tokens=2049, max_tokens=6144, weight=0.3),
+    LengthBucket(name="short", min_tokens=1, max_tokens=512),
+    LengthBucket(name="medium", min_tokens=513, max_tokens=2048),
+    LengthBucket(name="long", min_tokens=2049, max_tokens=6144),
 )
+# Percent of a round's prompts per category and length. Long prompts all come from chat
+# and maths prompts are all short: coding questions are almost never long, and maths
+# problems rarely pass 512 tokens (Qwen3.8-27B's bank has 111 medium ones).
+DEFAULT_MIX: dict[str, dict[str, float]] = {
+    "chat": {"short": 10, "medium": 10, "long": 30},
+    "code": {"short": 10, "medium": 20},
+    "math": {"short": 20},
+}
 
 
 def validate_buckets(buckets: tuple[LengthBucket, ...]) -> None:
@@ -64,22 +73,40 @@ def validate_buckets(buckets: tuple[LengthBucket, ...]) -> None:
     ordered = sorted(buckets, key=lambda b: b.min_tokens)
     if any(a.max_tokens >= b.min_tokens for a, b in zip(ordered, ordered[1:], strict=False)):
         raise ValueError("Input length buckets must not overlap")
-    if abs(sum(b.weight for b in buckets) - 1) > 1e-9:
-        raise ValueError("Input length weights must sum to 1")
+
+
+class DatasetSource(FrozenModel):
+    """A pinned public dataset whose questions go into a competition's prompt bank."""
+
+    kind: Literal["wildchat", "code", "math", "document"]
+    category: Name
+    repo_id: str = Field(min_length=1)
+    revision: Revision
+    subset: str | None = None
+    splits: tuple[str, ...] = ("train",)
 
 
 class DatasetConfig(FrozenModel):
+    # The prompt bank: the hash `prexon-evaluate prepare-datasets` prints for this recipe.
     manifest: Digest
-    category_weights: dict[Name, Positive] = {"chat": 0.4, "code": 0.35, "math": 0.25}
+    # The recipe the bank is built from, with the competition's model and revision.
+    sources: tuple[DatasetSource, ...] = ()
+    chat_template_kwargs: dict[str, str | bool | int] = {}
     buckets: tuple[LengthBucket, ...] = DEFAULT_BUCKETS
+    # Percent of each round's prompts per category and length bucket; adds up to 100.
+    mix: dict[Name, dict[Name, Positive]] = DEFAULT_MIX
     min_unique_prompts: int = Field(default=512, ge=1)
     seed_block_delay: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def valid_mix(self) -> DatasetConfig:
         validate_buckets(self.buckets)
-        if not self.category_weights or abs(sum(self.category_weights.values()) - 1) > 1e-9:
-            raise ValueError("Dataset category weights must sum to 1")
+        shares = [share for lengths in self.mix.values() for share in lengths.values()]
+        if not shares or abs(sum(shares) - 100) > 1e-9:
+            raise ValueError("Dataset mix percentages must add up to 100")
+        names = {b.name for b in self.buckets}
+        if any(set(lengths) - names for lengths in self.mix.values()):
+            raise ValueError("Dataset mix names an unknown length bucket")
         return self
 
 

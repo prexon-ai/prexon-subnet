@@ -6,13 +6,15 @@ import json
 import logging
 import os
 import signal
+import tempfile
 import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from evaluation.config import LIUM_API_KEY
-from shared.artifacts import ArtifactStore
+from shared.artifacts import ArtifactStore, extract_package
+from shared.checkpoints import sha256_file
 from shared.contracts import Qualification
 from shared.targets import load_competitions
 from validator.admission import AdmissionService
@@ -47,6 +49,12 @@ def main() -> None:
     )
     parser.add_argument("--publish-qualification", type=Path)
     parser.add_argument(
+        "--publish-reference",
+        type=Path,
+        metavar="PACKAGE",
+        help="Store a public reference package built for a competition; prints its SHA-256",
+    )
+    parser.add_argument(
         "--check-config", action="store_true", help="List the competitions in competitions/"
     )
     parser.add_argument(
@@ -78,6 +86,28 @@ def main() -> None:
             secret_key=S3_SECRET_ACCESS_KEY,
         )
         print(store.put_file(args.publish_qualification))
+        return
+    if args.publish_reference:
+        digest = sha256_file(args.publish_reference)
+        limit = max((c.policy.max_checkpoint_bytes for c in competitions), default=0)
+        # Unpacking checks the archive and its files the way admission will.
+        with tempfile.TemporaryDirectory() as scratch:
+            manifest = extract_package(
+                args.publish_reference, Path(scratch) / "head", digest, limit
+            )
+        if not any(
+            manifest.target_id == c.model_id
+            and manifest.target_revision == c.revision
+            and manifest.method in c.methods
+            for c in competitions
+        ):
+            parser.error("Package is not built for a competition in competitions/")
+        store = ArtifactStore(
+            ARTIFACT_ROOT,
+            access_key=S3_ACCESS_KEY_ID,
+            secret_key=S3_SECRET_ACCESS_KEY,
+        )
+        print(store.put_file(args.publish_reference))
         return
     if args.check_config:
         print(

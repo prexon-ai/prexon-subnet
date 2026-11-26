@@ -1,0 +1,28 @@
+{
+  "model_id": "Qwen/Qwen3.8-27B",
+  "revision": "37561816e66b5b9153b1b64c10968c18c1e6f4a0",
+  "active": true,
+  "allocation": 100,
+  "hardware": {
+    "gpu_type": "H200",
+    "gpu_count": 1,
+    "min_vram_gb": 141,
+    "min_cpus": 16,
+    "min_ram_gb": 128,
+    "min_disk_gb": 300,
+    "max_price_per_gpu_hour": 4,
+    "require_nvlink": false
+  },
+  "tensor_parallel_size": 1,
+  "datasets": {
+    "chat_template_kwargs": {
+      "reasoning_effort": "xhigh"
+    },
+    "manifest": "4ff39d86194da8ac1676bf39b20f424d357fcf72a47a06fad879b2fa606699e7"
+  },
+  "public_reference": {
+    "artifact": "5d51dd157ed40ada40e3c0bde803b83292d6f945b54b1c620bbb73011369763a",
+    "method": "dflash2"
+  },
+  "qualification_artifact": null
+}

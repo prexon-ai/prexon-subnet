@@ -6,7 +6,7 @@ import pytest
 
 from shared.checkpoints import checkpoint_schema
 from shared.contracts import DashboardSnapshot, Qualification
-from tests.factories import make_checkpoint, target, write_competitions
+from tests.factories import make_checkpoint, provenance, target, write_competitions
 
 
 def run_validator(set_config, monkeypatch, tmp_path, *args, **constants):
@@ -75,6 +75,35 @@ def test_qualification_cli_validates_uploads_and_prints_immutable_id(
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     assert capsys.readouterr().out.strip() == digest
     assert (tmp_path / "artifacts/objects" / digest).read_bytes() == path.read_bytes()
+
+
+def test_reference_cli_stores_only_a_package_built_for_a_competition(
+    set_config, tmp_path, monkeypatch, capsys
+):
+    from shared.artifacts import package_checkpoint
+
+    t = active_competition()
+
+    def package(name, model_id):
+        path = tmp_path / f"{name}.tar.gz"
+        package_checkpoint(
+            make_checkpoint(tmp_path / name),
+            path,
+            target_id=model_id,
+            target_revision=t.revision,
+            competition_id=model_id,
+            provenance=provenance(),
+        )
+        return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+    reference, digest = package("reference", t.model_id)
+    run_validator(set_config, monkeypatch, tmp_path, "--publish-reference", str(reference))
+    assert capsys.readouterr().out.strip() == digest
+    assert (tmp_path / "artifacts/objects" / digest).read_bytes() == reference.read_bytes()
+    stranger, other = package("stranger", "org/unlisted")
+    with pytest.raises(SystemExit):
+        run_validator(set_config, monkeypatch, tmp_path, "--publish-reference", str(stranger))
+    assert not (tmp_path / "artifacts/objects" / other).exists()
 
 
 def test_initialized_empty_controller_keeps_bittensor_for_clearing_weights(

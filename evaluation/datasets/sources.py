@@ -9,21 +9,13 @@ from pydantic import Field, model_validator
 
 from shared.targets import (
     DEFAULT_BUCKETS,
+    DatasetSource,
     FrozenModel,
     LengthBucket,
-    Name,
     Revision,
+    TargetConfig,
     validate_buckets,
 )
-
-
-class DatasetSource(FrozenModel):
-    kind: Literal["wildchat", "code", "math", "document"]
-    category: Name
-    repo_id: str = Field(min_length=1)
-    revision: Revision
-    subset: str | None = None
-    splits: tuple[str, ...] = ("train",)
 
 
 class PreparationConfig(FrozenModel):
@@ -46,6 +38,24 @@ class PreparationConfig(FrozenModel):
             if not source.splits or len(set(source.splits)) != len(source.splits):
                 raise ValueError("Specify unique dataset splits")
         return self
+
+
+def recipe(competition: TargetConfig) -> PreparationConfig:
+    """The prompt-bank recipe of a competition: its model and its datasets settings."""
+    datasets = competition.datasets
+    if datasets is None or not datasets.sources:
+        raise ValueError(f"{competition.model_id} has no dataset sources to prepare")
+    return PreparationConfig(
+        model_id=competition.model_id,
+        revision=competition.revision,
+        sources=datasets.sources,
+        buckets=datasets.buckets,
+        chat_template_kwargs=datasets.chat_template_kwargs,
+    )
+
+
+# The only column each kind of source contributes to a prompt.
+COLUMNS = {"wildchat": "conversation", "code": "input", "math": "problem", "document": "article"}
 
 
 def normalize(kind: str, row: dict[str, Any]) -> list[dict[str, str]] | None:
@@ -71,8 +81,7 @@ def normalize(kind: str, row: dict[str, Any]) -> list[dict[str, str]] | None:
                 return None
             messages.append({"role": role, "content": content.strip()})
         return messages
-    field = {"code": "input", "math": "problem", "document": "article"}[kind]
-    value = row.get(field)
+    value = row.get(COLUMNS[kind])
     if not isinstance(value, str) or not value.strip() or value.strip() == "-":
         return None
     text = value.strip()
@@ -92,4 +101,6 @@ def source_rows(source: DatasetSource) -> Iterable[dict[str, Any]]:
             split=split,
             revision=source.revision,
             streaming=True,
+            # Read only the column a prompt uses, not stored answers or solutions.
+            columns=[COLUMNS[source.kind]],
         )

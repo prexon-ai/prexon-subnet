@@ -190,7 +190,7 @@ def main() -> None:
         return
     parser = argparse.ArgumentParser(
         description="Standalone DFlash head and full comparison evaluation",
-        epilog="Prepare datasets: prexon-evaluate prepare-datasets --config PATH --cache-dir PATH",
+        epilog="Prepare a prompt bank: prexon-evaluate prepare-datasets --competition MODEL_ID",
     )
     parser.add_argument("--profile", type=Path, required=True, help="Local evaluation JSON profile")
     parser.add_argument(

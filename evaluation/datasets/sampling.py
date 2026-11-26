@@ -30,6 +30,21 @@ def quotas(count: int, weights: dict[str, float]) -> dict[str, int]:
     return allocated
 
 
+def allocation(requests: int, mix: dict[str, dict[str, float]]) -> dict[tuple[str, str], int]:
+    """Prompts per (category, length bucket): the mix percentages of a workload's requests."""
+    shelves = {
+        f"{category}/{bucket}": percent / 100
+        for category, lengths in mix.items()
+        for bucket, percent in lengths.items()
+    }
+    counts = quotas(requests, shelves)
+    return {
+        (key.split("/")[0], key.split("/")[1]): count
+        for key, count in sorted(counts.items())
+        if count
+    }
+
+
 def indices(size: int, count: int, seed: str) -> list[int]:
     if count > size:
         raise ValueError("Insufficient distinct prompts in dataset stratum")
@@ -96,21 +111,16 @@ def select_round(target: TargetConfig, cache: Path, seed: str) -> RoundPlan:
     # Same request count shares the same sample at every concurrency/output budget.
     for workload in target.workloads:
         selected = []
-        for category, category_count in sorted(
-            quotas(workload.requests, policy.category_weights).items()
-        ):
-            for bucket, count in sorted(
-                quotas(category_count, {b.name: b.weight for b in policy.buckets}).items()
+        for (category, bucket), count in allocation(workload.requests, policy.mix).items():
+            shard = shards.get((category, bucket))
+            if shard is None:
+                raise ValueError(f"Missing dataset stratum {category}/{bucket}")
+            domain = f"{resolved_seed}:{workload.requests}:{category}:{bucket}"
+            for prompt in read_prompts(
+                cache / policy.manifest, shard, indices(shard.count, count, domain)
             ):
-                shard = shards.get((category, bucket))
-                if shard is None:
-                    raise ValueError(f"Missing dataset stratum {category}/{bucket}")
-                domain = f"{resolved_seed}:{workload.requests}:{category}:{bucket}"
-                for prompt in read_prompts(
-                    cache / policy.manifest, shard, indices(shard.count, count, domain)
-                ):
-                    prompts[prompt.identity] = prompt
-                    selected.append(prompt.identity)
+                prompts[prompt.identity] = prompt
+                selected.append(prompt.identity)
         order = indices(len(selected), len(selected), f"{resolved_seed}:order:{workload.requests}")
         workloads.append(
             SelectedWorkload(name=workload.name, prompt_ids=tuple(selected[i] for i in order))
@@ -151,15 +161,10 @@ def validate_plan(target: TargetConfig, plan: RoundPlan, seed: str) -> None:
         if set(selected.prompt_ids) - lookup.keys():
             raise ValueError("Missing dataset prompt")
         records = [lookup[p] for p in selected.prompt_ids]
-        categories = quotas(workload.requests, policy.category_weights)
-        if Counter(p.category for p in records) != {k: v for k, v in categories.items() if v}:
-            raise ValueError("Dataset category quota mismatch")
-        for category, count in categories.items():
-            expected = quotas(count, {b.name: b.weight for b in policy.buckets})
-            if Counter(p.bucket for p in records if p.category == category) != {
-                k: v for k, v in expected.items() if v
-            }:
-                raise ValueError("Dataset length quota mismatch")
+        if Counter((p.category, p.bucket) for p in records) != allocation(
+            workload.requests, policy.mix
+        ):
+            raise ValueError("Dataset category/length quota mismatch")
         for record in records:
             bucket = next((b for b in policy.buckets if b.name == record.bucket), None)
             if (
@@ -216,11 +221,13 @@ def validate_selection(
             or len(set(selected.prompt_ids)) != workload.requests
         ):
             raise ValueError("Incomplete or duplicated dataset evidence")
-        categories = quotas(workload.requests, policy.category_weights)
-        expected_categories = {k: v for k, v in categories.items() if v}
+        shelves = allocation(workload.requests, policy.mix)
+        categories: Counter[str] = Counter()
         lengths: Counter[str] = Counter()
-        for count in categories.values():
-            lengths.update(quotas(count, {b.name: b.weight for b in policy.buckets}))
+        for (category, bucket), count in shelves.items():
+            categories[category] += count
+            lengths[bucket] += count
+        expected_categories = dict(categories)
         if selection.category_counts[
             workload.name
         ] != expected_categories or selection.bucket_counts[workload.name] != {

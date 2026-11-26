@@ -1,9 +1,24 @@
 # Evaluation datasets
 
-The general-purpose source mix is 40% chat, 35% code and 25% math by distinct
-prompt count. These are configurable sampling shares, separate from target
-emission allocations and concurrency score weights. Category shares are fixed
-per workload using largest-remainder rounding with stable ties.
+Each round takes its prompts by the competition's `datasets.mix`: a percent per category
+and length bucket, adding up to 100. In the default (in `competitions/shared.json`) long
+prompts all come from chat and maths prompts are all short, because coding questions are
+almost never long and maths problems rarely pass 512 tokens (the Qwen3.8-27B bank has
+215,504 long chat prompts but 1 long code, 111 medium maths and 3 long maths prompts):
+
+| % of a round | short | medium | long | total |
+| --- | --- | --- | --- | --- |
+| chat | 10 | 10 | 30 | 50 |
+| code | 10 | 20 | — | 30 |
+| math | 20 | — | — | 20 |
+| total | 40 | 30 | 30 | 100 |
+
+Keep every share well below its shelf: a share that takes most of a small shelf repeats
+the same prompts round after round.
+
+These percentages are separate from emission allocations and concurrency score
+weights. Counts per shelf are fixed per workload using largest-remainder rounding with
+stable ties.
 
 | Source | Input used | Preparation rule |
 | --- | --- | --- |
@@ -25,21 +40,19 @@ Install preparation dependencies without adding them to the API or GPU worker:
 
 ```bash
 uv sync --frozen --extra datasets
-mkdir -p profiles
-cp docs/examples/datasets.json profiles/datasets.json
 ```
 
-Set the **exact target model ID and 40-character revision** in that file. They
-must match the evaluation target. Source revisions in the example are pinned
-snapshots. Preparation streams every configured split: the first pass can take
-substantial CPU time, bandwidth and disk. It does not download model weights or
-rent GPUs. It loads the target tokenizer with remote code disabled and applies its chat template with
-`add_generation_prompt=true`. Model-specific options such as `enable_thinking`
-belong in `chat_template_kwargs`; they become part of the manifest identity.
+The recipe is the competition's own settings: its model and revision, the pinned
+`sources` in `competitions/shared.json`, and the model's `chat_template_kwargs` (for
+example `{"reasoning_effort": "xhigh"}` for Qwen3.8) in its file in `competitions/`.
+Preparation streams every configured split, reading only the column a prompt uses; the
+first pass can take substantial CPU time, bandwidth and disk. It does not download model
+weights or rent GPUs. It loads the target tokenizer with remote code disabled and applies
+its chat template with `add_generation_prompt=true`. Tokenizing runs on every CPU by
+default (`--workers`); the bank is the same byte for byte for any number of workers.
 
 ```bash
-uv run --extra datasets prexon-evaluate prepare-datasets \
-  --config profiles/datasets.json --cache-dir runtime/datasets
+uv run --extra datasets prexon-evaluate prepare-datasets --competition Qwen/Qwen3.8-27B
 ```
 
 The command prints a manifest SHA-256. The completed snapshot lives at
@@ -52,22 +65,23 @@ never publishes a partial snapshot. Keep completed snapshots immutable.
 
 Default token-length buckets include chat-template tokens:
 
-| Bucket | Input tokens | Share within each category |
-| --- | --- | --- |
-| short | 1–512 | 30% |
-| medium | 513–2048 | 40% |
-| long | 2049–6144 | 30% |
+| Bucket | Input tokens |
+| --- | --- |
+| short | 1–512 |
+| medium | 513–2048 |
+| long | 2049–6144 |
 
 Configure `buckets` in preparation and the target's `datasets` object to change
 these ranges. Names/ranges must match; ranges cannot overlap. Out-of-range rows
-are skipped, not truncated. Empty prepared strata fail preparation. Undersized
-strata fail selection instead of shrinking samples, redistributing shares or
-repeating prompts. Check prepared counts before publishing a competition.
+are skipped, not truncated. A shelf no prompt reaches (for example long maths) is left
+out of the bank; a mix that asks for a missing or undersized shelf fails selection instead
+of shrinking samples, redistributing shares or repeating prompts. Check prepared counts
+before publishing a competition.
 
 For optional document coverage, add a source with `kind: "document"`,
 `category: "document"`, `repo_id: "abisee/cnn_dailymail"`, subset `"3.0.0"`,
 revision `"96df5e686bee6baa90b8bee7c28b81fa3fa6223d"`, and desired splits.
-Explicitly rebalance `category_weights` to sum to one and prepare a new pool.
+Give it percentages in the `mix` (rebalancing the rest to add up to 100) and prepare a new pool.
 
 ## Configure a target
 
@@ -77,7 +91,9 @@ Both validator target profiles and standalone `profile.target` accept:
 {
   "datasets": {
     "manifest": "REPLACE_WITH_PRINTED_64_CHARACTER_SHA256",
-    "category_weights": {"chat": 0.4, "code": 0.35, "math": 0.25},
+    "mix": {"chat": {"short": 10, "medium": 10, "long": 30},
+            "code": {"short": 10, "medium": 20},
+            "math": {"short": 20}},
     "min_unique_prompts": 512,
     "seed_block_delay": 1
   },

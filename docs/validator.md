@@ -26,8 +26,9 @@ miners and the evaluator. `competitions/shared.json` holds what every competitio
 methods, engine and worker image, Lium template, workloads, policy, similarity settings,
 the dataset mix and serving settings. Each other file is one competition and holds only
 its own settings: `model_id` (the competition ID), `revision`, `active`, `allocation`,
-`hardware` and `tensor_parallel_size`, its prepared dataset pool (`datasets.manifest`,
-tokenized for that model), and optional `public_reference` and `qualification_artifact`
+`hardware` and `tensor_parallel_size`, its prompt bank (`datasets.manifest`, built for
+that model by `prexon-evaluate prepare-datasets --competition MODEL_ID` with its
+`datasets.chat_template_kwargs`), and optional `public_reference` and `qualification_artifact`
 (see `docs/examples/competition.json`). A competition file may override any shared
 setting; nested objects merge. Changing `shared.json` changes every competition's
 benchmark, so each one needs a new qualification record. The validator evaluates only
@@ -35,9 +36,11 @@ competitions with `"active": true`, and their allocations must add up to 100 (th
 tests check it). Files are only added: keep retired models with `"active": false`; a model
 appears once, and a new revision of it edits that file. Competitions are listed in file
 name order. The validator reads the folder at startup, so restart it after an edit, and
-commit and push it so miners can `git pull` it. A useful public reference is
-`{"artifact":"PACKAGE_SHA256","method":"dflash2"}`; absent references contribute 1.0 to
-the winning threshold.
+commit and push it so miners can `git pull` it. A public reference is a published draft
+model packaged for the competition with `prexon-miner package`; store it with
+`prexon-validator --publish-reference PACKAGE` (it checks the package names a competition
+and prints its SHA-256) and set `"public_reference": {"artifact": "PACKAGE_SHA256",
+"method": "dflash2"}`. Absent references contribute 1.0 to the winning threshold.
 
 Prepare the [dataset pool](datasets.md), replace placeholder digests, and set
 `PREXON_NETUID` and the wallet in `.env`, and configure the [Hippius/Lium deployment](docker.md). Production
