@@ -51,11 +51,12 @@ and use the resolved recipe hash in your provenance record.
 Use the standalone evaluator for either miner benchmarking or subnet development:
 
 ```bash
-uv run prexon-evaluate --profile profiles/local.json
-uv run prexon-evaluate --profile profiles/local.json --mode full
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head \
+  --mode full --public-head /path/public-reference
 ```
 
-See [standalone evaluation](evaluation.md) for the profile, head/full modes,
+See [standalone evaluation](evaluation.md) for the options, head/full modes,
 Lium or existing-pod backends, reports and cleanup. The implementation is in the
 root `evaluation/` package and is imported by the validator. Miner commands retain
 training/export, inspection, packaging and chain submission.

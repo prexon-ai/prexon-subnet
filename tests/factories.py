@@ -178,19 +178,15 @@ def add_competition(entry, name=None):
     (folder / f"{name}.json").write_text(json.dumps(entry))
 
 
-def write_profile(path, head, **updates):
-    """An evaluation profile naming its competition, which is added to the competitions file."""
-    competition = updates.pop("target", None) or target().model_dump(mode="json")
+def evaluate_argv(head, *flags, competition=None, backend="pod"):
+    """prexon-evaluate's command line for a head; its competition joins the competitions folder."""
+    competition = competition or target().model_dump(mode="json")
     add_competition(competition)
-    data = {
-        "competition": competition["model_id"],
-        "draft_head": str(head),
-        "backend": "pod",
-        "output_dir": "reports",
-        **updates,
-    }
-    path.write_text(json.dumps(data))
-    return path
+    model_id = competition["model_id"]
+    return [
+        *("prexon-evaluate", "--competition", model_id, "--head", str(head)),
+        *("--backend", backend, *flags),
+    ]
 
 
 class PrunedChainNode:

@@ -26,7 +26,7 @@ class LiumProvider(LiumClient):
         pod = self.status(pod_id)
         subprocess.run(
             [
-                *ssh_arguments(pod["ssh_connect_cmd"]),
+                *ssh_arguments(pod["ssh_connect_cmd"], pod_id),
                 "/opt/prexon/.venv/bin/python -c " + shlex.quote(_LAUNCH),
             ],
             input=json.dumps({"job_url": job_url, "result_url": result_url}),

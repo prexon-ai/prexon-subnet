@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from evaluation.cli import main
-from tests.factories import target, write_profile
+from tests.factories import evaluate_argv, target
 
 
 def test_cli_starts_without_role_or_gpu_dependencies(tmp_path):
@@ -34,24 +34,36 @@ main()
         timeout=15,
     )
     assert result.returncode == 0, result.stderr
-    assert "--profile" in result.stdout
+    assert "--competition" in result.stdout
 
 
-def test_public_cli_only_needs_profile_for_head_mode(tmp_path, monkeypatch, capsys, pod):
-    import sys
+def test_cli_needs_a_listed_competition_and_a_head_except_to_clean_up(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["prexon-evaluate", "--head", "head"])
+    with pytest.raises(SystemExit):
+        main()
+    assert "--competition and --head" in capsys.readouterr().err
+    argv = ["prexon-evaluate", "--competition", "org/unknown", "--head", "head"]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit):
+        main()
+    assert "No competition for org/unknown in competitions/" in capsys.readouterr().err
+    monkeypatch.setattr(sys, "argv", ["prexon-evaluate", "--cleanup-only"])
+    main()
+    assert "Rental reconciliation complete" in capsys.readouterr().out
 
-    from evaluation.cli import main
 
+def test_public_cli_only_needs_competition_and_head_for_head_mode(
+    tmp_path, monkeypatch, capsys, pod
+):
     head, snapshot, calls = pod
-    profile = write_profile(
-        tmp_path / "local.json",
+    argv = evaluate_argv(
         head,
-        target_path=str(snapshot),
-        baseline_head="missing-baseline-is-not-used-in-head-mode",
+        "--target-path",
+        str(snapshot),
+        "--public-head",
+        "missing-public-head-is-not-used-in-head-mode",
     )
-    monkeypatch.setenv("PREXON_MODEL_1_ID", "irrelevant/production-target")
-    monkeypatch.setenv("PREXON_MODEL_1_PROFILE", "/missing/production-profile")
-    monkeypatch.setattr(sys, "argv", ["prexon-evaluate", "--profile", str(profile)])
+    monkeypatch.setattr(sys, "argv", argv)
     main()
     reports = list((tmp_path / "reports/head").glob("*.json"))
     assert len(reports) == 1
@@ -76,7 +88,7 @@ def test_unfinished_lium_rental_cannot_be_resumed_with_inline_backend(tmp_path, 
     from evaluation.cli import main
 
     head, _, _ = pod
-    profile = write_profile(tmp_path / "local.json", head)
+    argv = evaluate_argv(head)
     directory = tmp_path / "reports/head"
     directory.mkdir(parents=True)
     (directory / "unfinished.lium.json").write_text(
@@ -92,7 +104,7 @@ def test_unfinished_lium_rental_cannot_be_resumed_with_inline_backend(tmp_path, 
         "evaluation.cli.execute",
         lambda *args: pytest.fail("Started work while a Lium rental needs recovery"),
     )
-    monkeypatch.setattr(sys, "argv", ["prexon-evaluate", "--profile", str(profile)])
+    monkeypatch.setattr(sys, "argv", argv)
     with pytest.raises(SystemExit) as stopped:
         main()
     assert stopped.value.code == 2
@@ -105,19 +117,13 @@ def test_cli_runs_single_submission_round_without_production_side_effects(
 
     head, snapshot, calls = pod
     config = target().model_copy(update={"qualification_artifact": None})
-    profile = write_profile(
-        tmp_path / "local.json",
+    argv = evaluate_argv(
         head,
-        target=config.model_dump(mode="json"),
-        target_path=str(snapshot),
-        baseline_head=str(head),
-        incumbent_head=str(head),
-        seed="7",
-        port=31000,
+        *("--target-path", str(snapshot), "--mode", "full", "--seed", "7"),
+        *("--public-head", str(head), "--incumbent-head", str(head)),
+        competition=config.model_dump(mode="json"),
     )
-    monkeypatch.setattr(
-        sys, "argv", ["prexon-evaluate", "--profile", str(profile), "--mode", "full"]
-    )
+    monkeypatch.setattr(sys, "argv", argv)
     original_import = builtins.__import__
 
     def guarded(name, globals=None, locals=None, fromlist=(), level=0):
@@ -143,7 +149,7 @@ def test_cli_runs_single_submission_round_without_production_side_effects(
     assert any(draft is None for draft, *_ in calls)
     assert data["seed"] == "7" and data["qualification_passed"] is False
     assert "2.000x" in capsys.readouterr().out
-    assert all(call[2]["port"] == 31000 for call in calls)
+    assert all(call[2]["port"] == 30000 for call in calls)
     assert not list(tmp_path.rglob("*.sqlite*"))
 
 
@@ -160,8 +166,7 @@ def test_cli_writes_inconclusive_report_and_returns_nonzero_on_runtime_failure(
         yield  # pragma: no cover
 
     monkeypatch.setattr("evaluation.measurement.launch_server", broken)
-    profile = write_profile(tmp_path / "local.json", head, target_path=str(snapshot))
-    monkeypatch.setattr(sys, "argv", ["prexon-evaluate", "--profile", str(profile)])
+    monkeypatch.setattr(sys, "argv", evaluate_argv(head, "--target-path", str(snapshot)))
     with pytest.raises(SystemExit) as stopped:
         main()
     assert stopped.value.code == 2

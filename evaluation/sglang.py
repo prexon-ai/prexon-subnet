@@ -45,6 +45,10 @@ def server_command(
         "--mem-fraction-static",
         str(target.memory_fraction),
         "--disable-radix-cache",
+        # As many requests at once as the busiest workload sends: SGLang otherwise allows 48 for
+        # speculative decoding, and a hybrid model reserves draft state per request and draft token.
+        "--max-running-requests",
+        str(max(w.concurrency for w in target.workloads)),
         "--random-seed",
         "42",
     ]

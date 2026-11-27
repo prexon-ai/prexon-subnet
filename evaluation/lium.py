@@ -17,11 +17,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from evaluation.config import DATASET_CACHE, SESSION_MAX_COST, SESSION_SECONDS, SSH_PRIVATE_KEY
 from evaluation.datasets.sampling import select_round, validate_plan
 from evaluation.lium_api import FAILED_POD_STATUSES, LiumClient, RentalRefused
-from evaluation.profile import EvaluationMode
-from evaluation.runner import LocalEvaluationReport, summarize_report
+from evaluation.runner import EvaluationMode, LocalEvaluationReport, summarize_report
 from evaluation.ssh import SshTransport
 from shared.checkpoints import validate_checkpoint
 from shared.contracts import Decision, FileDigest
@@ -334,8 +335,15 @@ def evaluate_on_lium(
             if now >= state["deadline"]:
                 raise TimeoutError("Development evaluation rental deadline reached")
             if state["pod_id"] and now >= next_poll:
+                try:
+                    pod = provider.status(state["pod_id"])
+                except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                    # A slow or failing status request says nothing about the pod: keep the last
+                    # answer and ask again next time. The deadline still bounds the rental.
+                    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                        raise
+                    return
                 next_poll = now + 10
-                pod = provider.status(state["pod_id"])
                 status = str(pod.get("status", "")).lower()
                 if status in FAILED_POD_STATUSES:
                     raise RuntimeError("Evaluation pod stopped")
@@ -408,16 +416,27 @@ def evaluate_on_lium(
                     ):
                         break
                     time.sleep(1)
-                transport = SshTransport(pod["ssh_connect_cmd"], tick)
+                transport = SshTransport(pod["ssh_connect_cmd"], state["pod_id"], tick)
 
-                code = transport.run(
+                def run_when_reachable(argv: list[str], **kwargs: Any) -> int:
+                    # ssh exits 255 when it cannot connect, as while a pod's SSH server starts.
+                    # Both steps are safe to repeat; about five minutes of refusals ends the
+                    # rental rather than idling a paid pod until its deadline.
+                    for _ in range(60):
+                        if (code := transport.run(argv, **kwargs)) != 255:
+                            return code
+                        tick()
+                        time.sleep(5)
+                    return code
+
+                code = run_when_reachable(
                     [*command("upload"), "--digest", hashlib.sha256(payload).hexdigest()],
                     source=archive_path,
                 )
                 if code:
                     raise RuntimeError("Could not transfer evaluation inputs")
                 # Detached execution and a remote lock allow host restart without duplicate engines.
-                if transport.run(command("start")):
+                if run_when_reachable(command("start")):
                     raise RuntimeError("Could not start remote evaluation")
                 returned = staging / "returned.json"
                 while True:

@@ -91,15 +91,27 @@ service while preserving the prefix. The public base is
 
 ## GPU worker image
 
-Build against the exact qualified CUDA/SGLang image:
+Build against the exact qualified CUDA/SGLang image, repack it into one layer, and push it
+to Docker Hub:
 
 ```bash
 docker build -f docker/Dockerfile.worker \
-  --build-arg ENGINE_IMAGE=your-qualified-image@sha256:ACTUAL_DIGEST \
-  -t your-registry/prexon-worker:VERSION .
+  --build-arg ENGINE_IMAGE=lmsysorg/sglang:VERSION@sha256:ACTUAL_DIGEST \
+  -t prexon-worker:VERSION-layers .
+docker/flatten-image.sh prexon-worker:VERSION-layers your-namespace/prexon-worker:VERSION
+docker push your-namespace/prexon-worker:VERSION
 ```
 
-Use the built worker's registry digest in the target profile and Lium template.
+Lium machines run pods under Sysbox, which cannot start images of many layers, so Lium
+re-packs any image of 30 or more layers into one before starting it. That needs room for a
+full extra copy (twice the image plus 10 GB), and a one-GPU pod is given the machine's whole
+disk, so the pod fails to start ("not enough free disk … to prepare this image"). SGLang
+images have about 70 layers; `flatten-image.sh` makes one, keeping the image's environment,
+command, working directory and labels. The single layer is about 16 GB compressed, which
+Docker Hub accepts; GitHub's registry limits layers to 10 GB.
+
+Use the pushed worker's registry digest in `competitions/shared.json` and the Lium template
+(image, tag and digest).
 The template must inject the SSH public key, start SSH, and keep the container
 running. The image installs OpenSSH and installs Prexon into the base image's own
 Python environment (`$VIRTUAL_ENV`, `/opt/sglang` in SGLang images), leaving SGLang's

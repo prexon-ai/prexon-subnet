@@ -19,7 +19,7 @@ def run_validator(set_config, monkeypatch, tmp_path, *args, **constants):
         "PUBLIC_ARTIFACT_ROOT": str(tmp_path / "public"),
         "UPLOAD_POLICY_PATH": tmp_path / "intake-policy/upload-policy.json",
         "DATASET_CACHE": tmp_path / "datasets",
-        "SSH_KNOWN_HOSTS": tmp_path / "known_hosts",
+        "SSH_KNOWN_HOSTS_DIR": tmp_path / "known_hosts",
         "UPLOAD_STATE_PATH": tmp_path / "api/uploads.sqlite3",
     }
     # Pin the values the owner sets in the committed file, so tests stay offline and idle

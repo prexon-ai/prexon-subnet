@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from evaluation.runner import evaluate
-from tests.factories import target, write_profile
+from tests.factories import evaluate_argv, target
 
 
 @pytest.fixture
@@ -51,7 +51,8 @@ def rental(tmp_path, monkeypatch, pod, set_config):
             calls.append("delete")
 
     class Transport:
-        def __init__(self, descriptor, tick):
+        def __init__(self, descriptor, pod_id, tick):
+            assert pod_id == "pod-1"
             self.tick = tick
 
         def run(self, argv, *, source=None, destination=None, limit=0, timeout_seconds=None):
@@ -142,6 +143,60 @@ def test_rental_transfers_same_profile_returns_evidence_and_deletes_pod(rental):
     again = lium.evaluate_on_lium(config, head, output, api_key="secret")
     assert again.execution_id == report.execution_id
     assert calls.count("rent") == 1
+
+
+def test_a_failed_status_request_does_not_end_the_rental(rental, monkeypatch):
+    import httpx
+
+    lium, config, head, output, calls, provider, _ = rental
+    failures = [
+        httpx.ReadTimeout("slow"),
+        httpx.HTTPStatusError(
+            "unavailable",
+            request=httpx.Request("GET", "https://lium.io/api/pods/pod-1"),
+            response=httpx.Response(503),
+        ),
+    ]
+    answer = provider.status
+
+    def flaky(self, pod_id):
+        if failures:
+            raise failures.pop(0)
+        return answer(self, pod_id)
+
+    monkeypatch.setattr(provider, "status", flaky)
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
+    assert not failures
+    assert report.score == pytest.approx(2) and report.rental_cleanup == "deleted"
+    assert calls.count("rent") == 1
+
+
+def test_rental_waits_for_ssh_on_a_pod_that_reports_running_early(rental, monkeypatch):
+    lium, config, head, output, calls, _, _ = rental
+    original = lium.SshTransport.run
+    refusals = {"upload": 2, "start": 1}
+
+    def not_ready_yet(self, argv, **kwargs):
+        # ssh exits 255 when it cannot connect: the pod's SSH server is still starting.
+        if refusals.get(argv[3]):
+            refusals[argv[3]] -= 1
+            return 255
+        return original(self, argv, **kwargs)
+
+    monkeypatch.setattr(lium.SshTransport, "run", not_ready_yet)
+    monkeypatch.setattr(lium.time, "sleep", lambda seconds: None)
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
+    assert refusals == {"upload": 0, "start": 0}
+    assert report.score == pytest.approx(2) and report.rental_cleanup == "deleted"
+
+
+def test_ssh_that_never_connects_ends_the_rental_instead_of_idling(rental, monkeypatch):
+    lium, config, head, output, calls, _, _ = rental
+    monkeypatch.setattr(lium.SshTransport, "run", lambda self, argv, **kwargs: 255)
+    monkeypatch.setattr(lium.time, "sleep", lambda seconds: None)
+    report = lium.evaluate_on_lium(config, head, output, api_key="secret")
+    assert report.status == "inconclusive" and report.rental_cleanup == "deleted"
+    assert calls[-1] == "delete"
 
 
 def test_rental_failure_and_cleanup_retry_preserve_report(rental, monkeypatch):
@@ -340,13 +395,7 @@ def test_cli_releases_uncertain_output_directory_only_after_termination_bound(
 
     lium, config, head, output, calls, _, remote = uncertain_cleanup
     set_config(LIUM_API_KEY="secret")
-    profile = write_profile(
-        output.parents[2] / "local.json",
-        head,
-        backend="lium",
-        target=config.model_dump(mode="json"),
-    )
-    argv = ["prexon-evaluate", "--profile", str(profile)]
+    argv = evaluate_argv(head, backend="lium", competition=config.model_dump(mode="json"))
     monkeypatch.setattr(lium.time, "time", lambda: 4659)
     monkeypatch.setattr(sys, "argv", [*argv, "--cleanup-only"])
     with pytest.raises(SystemExit) as stopped:

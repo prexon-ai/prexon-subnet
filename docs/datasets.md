@@ -85,7 +85,7 @@ Give it percentages in the `mix` (rebalancing the rest to add up to 100) and pre
 
 ## Configure a target
 
-Both validator target profiles and standalone `profile.target` accept:
+Competition files accept:
 
 ```json
 {
@@ -94,13 +94,13 @@ Both validator target profiles and standalone `profile.target` accept:
     "mix": {"chat": {"short": 10, "medium": 10, "long": 30},
             "code": {"short": 10, "medium": 20},
             "math": {"short": 20}},
-    "min_unique_prompts": 512,
+    "min_unique_prompts": 64,
     "seed_block_delay": 1
   },
   "workloads": [
-    {"name": "low", "concurrency": 1, "requests": 512,
+    {"name": "low", "concurrency": 1, "requests": 64,
      "output_tokens": 256, "weight": 0.2},
-    {"name": "medium", "concurrency": 8, "requests": 512,
+    {"name": "medium", "concurrency": 8, "requests": 256,
      "output_tokens": 256, "weight": 0.3},
     {"name": "high", "concurrency": 32, "requests": 512,
      "output_tokens": 256, "weight": 0.5}
@@ -110,9 +110,11 @@ Both validator target profiles and standalone `profile.target` accept:
 
 Remove inline `prompts` when configuring datasets. Each workload needs at least
 `min_unique_prompts` requests and enough context for its longest input bucket
-plus `output_tokens`. The 512-prompt default is a **pilot**, not a proven sample
-size for detecting a 1.5% gain. Calibrate diversity, total output work, repeats,
-variance and GPU cost before production. Repeats reuse the selected prompts to
+plus `output_tokens`. Request counts grow with concurrency to keep a round affordable: on
+one H200, Qwen3.8-27B with its DFlash2 reference generated about 147 tokens/s one at a
+time, 479 at 8 and 608 at 32, so 64, 256 and 512 requests of 256 tokens take about 2, 2.5
+and 3.5 minutes per repeat, and three repeats about 25 minutes in head mode. These sizes are still not a proven sample for detecting a 1.5% gain.
+Calibrate diversity, total output work, repeats, variance and GPU cost before production. Repeats reuse the selected prompts to
 measure execution noise; they do not count as additional unique inputs. Output
 budgets remain configurable per workload: add cells for short/long outputs or
 different serving loads, with published weights.
@@ -149,7 +151,7 @@ The file-chain development adapter requires an explicit `block_hashes` mapping
 for sampling blocks, e.g. `"111": "0x<64 hex characters>"`, alongside a snapshot
 whose `block` has reached that height. It never invents network entropy.
 
-Standalone pod/Lium evaluation uses the profile's explicit `seed` instead of
+Standalone pod/Lium evaluation uses `prexon-evaluate --seed` instead of
 chain entropy and remains non-authoritative. Lium freezes the plan before renting
 and transfers it with the heads. The remote host needs neither the full dataset
 cache nor preparation dependencies. Resume reuses and validates the journal's

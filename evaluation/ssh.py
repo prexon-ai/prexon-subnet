@@ -11,10 +11,13 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from evaluation.config import SSH_KNOWN_HOSTS, SSH_PRIVATE_KEY
+from evaluation.config import SSH_KNOWN_HOSTS_DIR, SSH_PRIVATE_KEY
 
 
-def ssh_arguments(descriptor: str) -> list[str]:
+def ssh_arguments(descriptor: str, pod_id: str) -> list[str]:
+    """ssh's arguments for one pod: its host key is trusted on first connect, for that pod only."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", pod_id):
+        raise ValueError("Unsafe pod identity")
     parts = shlex.split(descriptor)
     if len(parts) == 4 and parts[0:2] == ["ssh", "-p"]:
         port, host = parts[2], parts[3]
@@ -31,7 +34,7 @@ def ssh_arguments(descriptor: str) -> list[str]:
         or host.startswith("-")
     ):
         raise ValueError("Unsafe SSH connection descriptor")
-    known_hosts = SSH_KNOWN_HOSTS.expanduser()
+    known_hosts = SSH_KNOWN_HOSTS_DIR.expanduser() / pod_id
     known_hosts.parent.mkdir(parents=True, exist_ok=True)
     return [
         "ssh",
@@ -60,8 +63,8 @@ def ssh_arguments(descriptor: str) -> list[str]:
 
 
 class SshTransport:
-    def __init__(self, descriptor: str, tick: Callable[[], None]) -> None:
-        self.arguments = ssh_arguments(descriptor)
+    def __init__(self, descriptor: str, pod_id: str, tick: Callable[[], None]) -> None:
+        self.arguments = ssh_arguments(descriptor, pod_id)
         self.tick = tick
 
     def run(

@@ -10,16 +10,46 @@ from pathlib import Path
 from statistics import mean
 from typing import Literal
 
+from pydantic import Field, model_validator
+
 from evaluation.datasets.sampling import validate_selection
 from evaluation.measurement import hardware_matches, measure_configurations
 from evaluation.metrics import throughput_summary
-from evaluation.profile import EvaluationMode
 from evaluation.scoring import score_benchmark
 from evaluation.sglang import Arm
 from shared.checkpoints import validate_checkpoint
 from shared.contracts import BenchmarkEvidence, Decision, FileDigest
 from shared.datasets import RoundPlan
 from shared.targets import Digest, FrozenModel, Positive, TargetConfig
+
+EvaluationMode = Literal["head", "full"]
+
+
+class EvaluationRun(FrozenModel):
+    """One prexon-evaluate run: the competition's target, the heads to measure and where."""
+
+    target: TargetConfig
+    draft_head: Path
+    public_head: Path | None = None
+    incumbent_head: Path | None = None
+    mode: EvaluationMode = "head"
+    backend: Literal["lium", "pod"] = "lium"
+    output_dir: Path
+    target_path: Path | None = None
+    seed: str = "42"
+    port: int = Field(default=30000, ge=1, le=65535)
+    session_seconds: int | None = Field(default=None, ge=60, le=720 * 3600)
+    session_max_cost: Positive | None = None
+
+    @model_validator(mode="after")
+    def remote_target_is_absolute(self) -> EvaluationRun:
+        if (
+            self.backend == "lium"
+            and self.target_path is not None
+            and not self.target_path.is_absolute()
+        ):
+            raise ValueError("The target path inside a Lium pod must be absolute")
+        return self
 
 
 class HeadMetrics(FrozenModel):

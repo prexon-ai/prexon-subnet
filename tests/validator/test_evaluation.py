@@ -21,6 +21,17 @@ def test_launch_pins_target_and_only_enables_draft_for_speculative_arm(tmp_path)
     assert "--disable-radix-cache" in draft
 
 
+def test_engine_holds_only_as_many_requests_as_the_busiest_workload_sends(tmp_path):
+    # SGLang otherwise allows 48 requests at once for speculative decoding, and a hybrid model
+    # reserves draft state for each of them and each draft token: on Qwen3.8-27B that left no
+    # memory for the KV cache. The cap is never below a workload's concurrency, so nothing queues.
+    t = target()
+    busiest = max(w.concurrency for w in t.workloads)
+    for draft in (None, tmp_path / "draft"):
+        command = server_command(t, 30000, draft)
+        assert command[command.index("--max-running-requests") + 1] == str(busiest)
+
+
 def test_real_client_counts_tokens_and_rejects_short_output():
     short = False
     calls = []

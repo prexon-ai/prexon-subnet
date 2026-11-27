@@ -9,8 +9,8 @@
     "min_vram_gb": 140,
     "min_cpus": 16,
     "min_ram_gb": 128,
-    "min_disk_gb": 300,
-    "max_price_per_gpu_hour": 4,
+    "min_disk_gb": 200,
+    "max_price_per_gpu_hour": 5,
     "require_nvlink": false
   },
   "tensor_parallel_size": 1,

@@ -8,21 +8,15 @@ they do not admit submissions, promote winners, or publish weights.
 
 ```bash
 uv sync --frozen
-mkdir -p profiles
-cp docs/examples/local-evaluation.json profiles/local.json
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head \
+  --mode full --public-head /path/public-reference
 ```
 
-Set `competition` to a model in `competitions/`; its target, image, GPU requirements
-and [dataset manifest](datasets.md) come from there. Then set the head path and backend,
-and run. The example names `Qwen/Qwen3-8B`, the competition in
-`docs/examples/competition.json`; the committed `competitions/` folder has no
-competition yet, so pick a listed one (`uv run prexon-miner competitions`) or copy that
-file into `competitions/` first:
-
-```bash
-uv run prexon-evaluate --profile profiles/local.json
-uv run prexon-evaluate --profile profiles/local.json --mode full
-```
+`--competition` names a model in `competitions/` (`uv run prexon-miner competitions`
+lists them), active or not. Its target, image, GPU requirements and
+[dataset manifest](datasets.md) come from there, so a local result is measured on the
+validator's benchmark.
 
 | Mode | Measurements | Result |
 | --- | --- | --- |
@@ -33,26 +27,22 @@ Head mode still needs the target LLM; it measures serving with that head rather
 than the draft network alone. Full mode measures only supplied references and
 uses no saved baseline scores. See [scoring](scoring.md) for comparison rules.
 
-## Profile settings
+## Options
 
-The profile names a `competition` (a model ID in `competitions/`) and measures
-against that competition's benchmark, active or not. Paths are relative to the profile
-file, except `target_path` inside a Lium pod, which must be absolute.
-
-| Field | Purpose / default |
+| Option | Purpose / default |
 | --- | --- |
-| `target` | Pinned model, runtime, hardware, workloads, and policy |
-| `draft_head` | Exported candidate directory |
-| `baseline_head`, `incumbent_head` | Optional references for full mode |
-| `mode` | `head` or `full`; CLI `--mode` overrides it |
-| `backend` | `lium` (default) or `pod` |
-| `output_dir` | Report and rental-journal directory; default `runtime/evaluations` |
-| `target_path` | Optional existing target snapshot in the GPU environment |
-| `seed` | Reproducible dataset selection/order seed; default `"42"` |
-| `port` | SGLang port; default 30000 |
-| `session_seconds`, `session_max_cost` | Optional rental-budget overrides |
+| `--competition MODEL_ID` | The benchmark: a model in `competitions/` (required) |
+| `--head PATH` | The draft model to measure: `config.json` and safetensors (required) |
+| `--mode` | `head` (default) or `full` |
+| `--public-head`, `--incumbent-head` | Full mode: the public reference and the current winner to compare against |
+| `--backend` | `lium` (default) rents a pod; `pod` uses this GPU machine |
+| `--target-path` | A copy of the target already on the GPU machine; absolute for Lium |
+| `--seed` | Picks the round's prompts; default `42` |
+| `--session-seconds`, `--session-max-cost` | Rental limits; default `SESSION_SECONDS` and `SESSION_MAX_COST` |
 
-Baseline/incumbent paths are ignored in head mode. Unknown fields fail validation.
+Reports and rental records go to `runtime/evaluations/` (`EVALUATIONS_DIR` in
+`evaluation/config.py`), and SGLang listens on port 30000 inside the pod. Reference heads
+are ignored in head mode.
 A local target path does not authenticate the checkpoint revision; use a verified
 snapshot. Template values are placeholders, not qualified model/GPU combinations.
 
@@ -77,8 +67,8 @@ that model's download (`HF_HOME=/mnt/huggingface`) between rentals, and a volume
 one pod at a time.
 
 `evaluation/config.py` holds the other values: the Lium URL, the dataset cache and the
-default round limits (`SESSION_SECONDS`, `SESSION_MAX_COST`), which a profile's
-`session_seconds` and `session_max_cost` override.
+default round limits (`SESSION_SECONDS`, `SESSION_MAX_COST`), which
+`--session-seconds` and `--session-max-cost` override.
 
 A target-specific `lium_template_id` overrides the global template. The host can
 be CPU-only. A [qualified worker image](docker.md) must supply SGLang/Torch and
@@ -106,10 +96,10 @@ unfinished runs resume; changed inputs require cleanup first.
 
 ```bash
 # Validate and quote without renting.
-uv run prexon-evaluate --profile profiles/local.json --dry-run
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head --dry-run
 
 # Retry cleanup of unfinished rentals.
-uv run prexon-evaluate --profile profiles/local.json --cleanup-only
+uv run prexon-evaluate --cleanup-only
 ```
 
 An unresolved create attempt is recovered by its saved identity. If no pod is
@@ -130,6 +120,5 @@ needed because billing can lag. Engine/staging cleanup is awaited on cancellatio
 | 1 | Completed full evaluation failed benchmark gates |
 | 2 | Invalid input, incomplete evidence, or pending cleanup |
 
-Python callers use `evaluation.profile.load_profile` and
-`evaluation.runner.evaluate`. Production jobs wrap shared measurement/scoring with
+Python callers use `evaluation.runner.evaluate`. Production jobs wrap shared measurement/scoring with
 validator-specific identity, qualification, and deadline checks.

@@ -3,7 +3,7 @@
     "dflash2"
   ],
   "engine_version": "0.5.23",
-  "worker_image": "ghcr.io/prexon-ai/prexon-worker:v0.5.23@sha256:d88e874abdc6a61270a1f2fad49813d612cc22881881cdabde17e0d167013735",
+  "worker_image": "prexonai/prexon-worker:v0.5.23-2@sha256:4c2377b4c1315b82a512798a0e8dfaf34165be93c3a556c495cc97977af5aab6",
   "lium_template_id": "",
   "dtype": "bfloat16",
   "context_length": 8192,
@@ -13,14 +13,14 @@
     {
       "name": "low",
       "concurrency": 1,
-      "requests": 512,
+      "requests": 64,
       "output_tokens": 256,
       "weight": 0.2
     },
     {
       "name": "medium",
       "concurrency": 8,
-      "requests": 512,
+      "requests": 256,
       "output_tokens": 256,
       "weight": 0.3
     },
@@ -37,7 +37,7 @@
     "confidence": 0.95,
     "max_regression": 0.05,
     "max_reference_drift": 0.05,
-    "repeats": 5,
+    "repeats": 3,
     "warmup_requests": 2,
     "max_checkpoint_bytes": 4294967296,
     "max_job_seconds": 7200
@@ -57,7 +57,7 @@
         "short": 20
       }
     },
-    "min_unique_prompts": 512,
+    "min_unique_prompts": 64,
     "seed_block_delay": 1,
     "sources": [
       {

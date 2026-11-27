@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from evaluation.datasets.sampling import validate_plan
-from evaluation.profile import EvaluationProfile
+from evaluation.runner import EvaluationRun
 from shared.checkpoints import validate_checkpoint
 from shared.contracts import FileDigest
 from shared.datasets import RoundPlan
@@ -83,14 +83,14 @@ def install(root: Path, archive: BinaryIO, expected_digest: str) -> None:
             staging.rename(destination)
 
 
-def inline_profile(root: Path) -> EvaluationProfile:
+def inline_run(root: Path) -> EvaluationRun:
     request = json.loads((root / "input/request.json").read_bytes())
-    return EvaluationProfile(
+    return EvaluationRun(
         target=TargetConfig.model_validate(request["target"]),
         draft_head=root / "input/candidate",
         backend="pod",
         mode=request["mode"],
-        baseline_head=root / "input/public" if "public" in request["checkpoints"] else None,
+        public_head=root / "input/public" if "public" in request["checkpoints"] else None,
         incumbent_head=root / "input/incumbent" if "incumbent" in request["checkpoints"] else None,
         output_dir=root / "logs",
         target_path=request["target_path"],
@@ -148,7 +148,7 @@ def main() -> None:
             if request.get("dataset_plan")
             else None
         )
-        report = run_inline(inline_profile(root), request["execution_id"], prepared_round=plan)
+        report = run_inline(inline_run(root), request["execution_id"], prepared_round=plan)
         write_json(root / "report.json", report.model_dump(mode="json"))
         if report.assessment not in {"head_measured", "passes_local_checks"}:
             raise SystemExit(2 if report.assessment == "inconclusive" else 1)

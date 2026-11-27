@@ -61,7 +61,8 @@ def local_config(set_config, tmp_path, tmp_path_factory, monkeypatch):
         UPLOAD_POLICY_PATH=tmp_path / "intake-policy/upload-policy.json",
         UPLOAD_STATE_PATH=tmp_path / "api/uploads.sqlite3",
         DATASET_CACHE=tmp_path / "datasets",
-        SSH_KNOWN_HOSTS=tmp_path / "known_hosts",
+        EVALUATIONS_DIR=tmp_path / "reports",
+        SSH_KNOWN_HOSTS_DIR=tmp_path / "known_hosts",
     )
 
 

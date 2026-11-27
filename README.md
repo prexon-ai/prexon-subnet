@@ -87,11 +87,9 @@ limits, and command options.
 The same evaluator is available to miners and validators:
 
 ```bash
-mkdir -p profiles
-cp docs/examples/local-evaluation.json profiles/local.json
-# Set "competition" to a model in competitions/, then the head path and backend.
-uv run prexon-evaluate --profile profiles/local.json
-uv run prexon-evaluate --profile profiles/local.json --mode full
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head
+uv run prexon-evaluate --competition Qwen/Qwen3.8-27B --head /path/exported-head \
+  --mode full --public-head /path/public-reference
 ```
 
 `head` mode measures candidate throughput, latency, and acceptance metrics.
@@ -99,7 +97,7 @@ uv run prexon-evaluate --profile profiles/local.json --mode full
 speedup. Lium is the default backend; `pod` uses an existing GPU environment.
 Standalone reports are development results and do not affect emissions.
 
-See [evaluation](docs/evaluation.md) for profiles and rental recovery, and
+See [evaluation](docs/evaluation.md) for every option and rental recovery, and
 [datasets](docs/datasets.md) for preparing the pinned prompt pool. Templates
 require real revisions, image digests, and a prepared dataset manifest.
 

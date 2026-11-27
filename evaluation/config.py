@@ -28,8 +28,11 @@ SSH_PUBLIC_KEY = Path(_env.get("SSH_PUBLIC_KEY") or "~/.ssh/id_ed25519.pub")
 
 # Values --------------------------------------------------------------------------------
 LIUM_BASE_URL = "https://lium.io/api"
-SSH_KNOWN_HOSTS = ROOT / "runtime/known_hosts"
+# One known_hosts file per pod: a new pod on a machine:port rented before has a new host key.
+SSH_KNOWN_HOSTS_DIR = ROOT / "runtime/known-hosts"
 DATASET_CACHE = ROOT / "runtime/datasets"
-# Defaults for a prexon-evaluate round; an evaluation profile may override both.
+# prexon-evaluate reports and rental records (for --cleanup-only after a crash).
+EVALUATIONS_DIR = ROOT / "runtime/evaluations"
+# Rental limits of a prexon-evaluate round; --session-seconds and --session-max-cost override.
 SESSION_SECONDS = 14400
 SESSION_MAX_COST = 100
