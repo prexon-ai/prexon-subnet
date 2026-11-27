@@ -29,7 +29,7 @@ VALIDATOR_SECTION = [
 EVALUATION_SECTION = [
     "LIUM_API_KEY",
     "LIUM_TEMPLATE_ID",
-    "LIUM_VOLUME_ID",
+    "LIUM_VOLUMES",
     "SSH_PRIVATE_KEY",
     "SSH_PUBLIC_KEY",
 ]
@@ -84,22 +84,25 @@ def test_empty_validator_section_falls_back_to_defaults():
 
 
 def test_evaluation_section_of_env_fills_the_evaluation_config():
-    names = ["LIUM_API_KEY", "LIUM_TEMPLATE_ID", "LIUM_VOLUME_ID", "SSH_PRIVATE_KEY"]
+    names = ["LIUM_API_KEY", "LIUM_TEMPLATE_ID", "LIUM_VOLUMES", "SSH_PRIVATE_KEY"]
     environment = {
         "LIUM_API_KEY": "lium",
         "LIUM_TEMPLATE_ID": "template",
-        "LIUM_VOLUME_ID": "volume",
+        "LIUM_VOLUMES": "Qwen/Qwen3.8-27B=volume-a, org/other=volume-b",
         "SSH_PRIVATE_KEY": "/keys/prexon",
     }
     assert read("evaluation.config", names, **environment) == {
         "LIUM_API_KEY": "'lium'",
         "LIUM_TEMPLATE_ID": "'template'",
-        "LIUM_VOLUME_ID": "'volume'",
+        "LIUM_VOLUMES": "{'Qwen/Qwen3.8-27B': 'volume-a', 'org/other': 'volume-b'}",
         "SSH_PRIVATE_KEY": "PosixPath('/keys/prexon')",
     }
-    defaults = read("evaluation.config", ["LIUM_API_KEY", "SSH_PRIVATE_KEY", "SSH_PUBLIC_KEY"])
+    defaults = read(
+        "evaluation.config", ["LIUM_API_KEY", "LIUM_VOLUMES", "SSH_PRIVATE_KEY", "SSH_PUBLIC_KEY"]
+    )
     assert defaults == {
         "LIUM_API_KEY": "''",
+        "LIUM_VOLUMES": "{}",
         "SSH_PRIVATE_KEY": "PosixPath('~/.ssh/id_ed25519')",
         "SSH_PUBLIC_KEY": "PosixPath('~/.ssh/id_ed25519.pub')",
     }

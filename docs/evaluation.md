@@ -64,10 +64,17 @@ validators use the same section:
 ```dotenv
 LIUM_API_KEY=your-private-key
 LIUM_TEMPLATE_ID=your-template-id
-LIUM_VOLUME_ID=
+LIUM_VOLUMES=Qwen/Qwen3.8-27B=your-volume-id
 SSH_PRIVATE_KEY=~/.ssh/id_ed25519
 SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 ```
+
+One template serves every competition: it runs the worker image pinned in
+`competitions/shared.json` (image, tag and digest must match it exactly, start command
+`sleep infinity`, port 22). A competition file's `lium_template_id` overrides it. Volumes
+are optional and per competition: Lium mounts a volume at `/mnt`, where the worker keeps
+that model's download (`HF_HOME=/mnt/huggingface`) between rentals, and a volume attaches to
+one pod at a time.
 
 `evaluation/config.py` holds the other values: the Lium URL, the dataset cache and the
 default round limits (`SESSION_SECONDS`, `SESSION_MAX_COST`), which a profile's

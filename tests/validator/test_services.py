@@ -151,3 +151,45 @@ def test_lium_rejects_template_image_mismatch(tmp_path, set_config):
     provider = LiumProvider("key", 100, client=client)
     with pytest.raises(ValueError, match="image"):
         provider.build_request({"id": "a" * 32, "started_at": 1, "deadline": 3601}, target())
+
+
+@pytest.mark.parametrize("tag,accepted", [("v0.5.23", True), ("v0.5.22", False), (None, False)])
+def test_lium_template_names_image_and_tag_separately(tmp_path, set_config, tag, accepted):
+    key = tmp_path / "id.pub"
+    key.write_text("ssh-ed25519 public")
+    digest = "sha256:" + "a" * 64
+    template = {
+        "docker_image": "ghcr.io/prexon-ai/prexon-worker",
+        "docker_image_tag": tag,
+        "docker_image_digest": digest,
+    }
+    client = httpx.Client(
+        base_url="https://lium.io/api",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=template)),
+    )
+    set_config(LIUM_TEMPLATE_ID="template", SSH_PUBLIC_KEY=key)
+    competition = target().model_copy(
+        update={"worker_image": f"ghcr.io/prexon-ai/prexon-worker:v0.5.23@{digest}"}
+    )
+    provider = LiumProvider("key", 100, client=client)
+    session = {"id": "a" * 32, "started_at": 1, "deadline": 3601}
+    if accepted:
+        assert provider.build_request(session, competition)["template_id"] == "template"
+    else:
+        with pytest.raises(ValueError, match="image"):
+            provider.build_request(session, competition)
+
+
+def test_lium_rental_mounts_only_its_own_competitions_volume(tmp_path, set_config):
+    key = tmp_path / "id.pub"
+    key.write_text("ssh-ed25519 public")
+    template = {"docker_image": "image", "docker_image_digest": "sha256:" + "a" * 64}
+    client = httpx.Client(
+        base_url="https://lium.io/api",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=template)),
+    )
+    set_config(LIUM_TEMPLATE_ID="template", SSH_PUBLIC_KEY=key, LIUM_VOLUMES={"org/model1": "vol"})
+    provider = LiumProvider("key", 100, client=client)
+    session = {"id": "a" * 32, "started_at": 1, "deadline": 3601}
+    assert provider.build_request(session, target(1))["volume_id"] == "vol"
+    assert "volume_id" not in provider.build_request(session, target(2))

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from evaluation.config import LIUM_BASE_URL, LIUM_TEMPLATE_ID, LIUM_VOLUME_ID, SSH_PUBLIC_KEY
+from evaluation.config import LIUM_BASE_URL, LIUM_TEMPLATE_ID, LIUM_VOLUMES, SSH_PUBLIC_KEY
 from shared.targets import TargetConfig
 
 # Pod states that cannot become a usable pod again (lower-cased Lium PodStatus values).
@@ -60,8 +60,17 @@ class LiumClient:
         response = self.client.get(f"templates/{template}")
         response.raise_for_status()
         data = response.json()
-        image, digest = target.worker_image.rsplit("@", 1)
-        if data.get("docker_image") != image or data.get("docker_image_digest") != digest:
+        reference, digest = target.worker_image.rsplit("@", 1)
+        # Lium keeps the repository and the tag in separate fields.
+        image, tag = reference, ""
+        if ":" in reference.rsplit("/", 1)[-1]:
+            image, tag = reference.rsplit(":", 1)
+        template_image = (
+            data.get("docker_image"),
+            data.get("docker_image_tag") or "",
+            data.get("docker_image_digest"),
+        )
+        if template_image != (image, tag, digest):
             raise ValueError("Lium template image does not match the immutable worker image")
         hours = max(1, math.ceil((session["deadline"] - session["started_at"]) / 3600))
         if hours > 720:
@@ -86,8 +95,8 @@ class LiumClient:
             "enable_backups": False,
             "skip_add_agent_ssh_key": True,
         }
-        if LIUM_VOLUME_ID:
-            request["volume_id"] = LIUM_VOLUME_ID
+        if target.model_id in LIUM_VOLUMES:
+            request["volume_id"] = LIUM_VOLUMES[target.model_id]
         return request
 
     def quote(self, request: dict[str, Any]) -> dict[str, Any]:

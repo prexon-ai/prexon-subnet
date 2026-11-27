@@ -15,7 +15,14 @@ _env = {**dotenv_values(ROOT / ".env"), **os.environ}
 # .env: Evaluation section --------------------------------------------------------------
 LIUM_API_KEY = _env.get("LIUM_API_KEY") or ""
 LIUM_TEMPLATE_ID = _env.get("LIUM_TEMPLATE_ID") or ""
-LIUM_VOLUME_ID = _env.get("LIUM_VOLUME_ID") or ""
+# Each competition's Lium volume, as MODEL_ID=VOLUME_ID pairs separated by commas. A
+# volume mounts at /mnt and keeps that model's download (HF_HOME=/mnt/huggingface) between
+# rentals; it attaches to one pod at a time, so competitions do not share one.
+LIUM_VOLUMES = dict(
+    pair.strip().split("=", 1)
+    for pair in (_env.get("LIUM_VOLUMES") or "").split(",")
+    if pair.strip()
+)
 SSH_PRIVATE_KEY = Path(_env.get("SSH_PRIVATE_KEY") or "~/.ssh/id_ed25519")
 SSH_PUBLIC_KEY = Path(_env.get("SSH_PUBLIC_KEY") or "~/.ssh/id_ed25519.pub")
 

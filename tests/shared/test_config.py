@@ -76,7 +76,7 @@ def test_no_leftover_references_to_removed_settings():
         r"|shared\.config\b|shared/config\.py"
         r"|\bslots?\b|\bTARGETS\b|build_targets|--model-id|--competition-id|--slot\b"
         r"|examples/profile\.json|profiles/model-|prexon-miner targets"
-        r"|competitions\.json|COMPETITIONS_FILE|examples/datasets\.json|competitions/datasets|category_weights"
+        r"|competitions\.json|COMPETITIONS_FILE|examples/datasets\.json|competitions/datasets|category_weights|LIUM_VOLUME_ID"
     )
     leftovers = [
         str(path.relative_to(root))

@@ -6,7 +6,7 @@
   "hardware": {
     "gpu_type": "H200",
     "gpu_count": 1,
-    "min_vram_gb": 141,
+    "min_vram_gb": 140,
     "min_cpus": 16,
     "min_ram_gb": 128,
     "min_disk_gb": 300,
