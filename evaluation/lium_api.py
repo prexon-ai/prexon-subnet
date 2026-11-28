@@ -8,7 +8,13 @@ from typing import Any
 
 import httpx
 
-from evaluation.config import LIUM_BASE_URL, LIUM_TEMPLATE_ID, LIUM_VOLUMES, SSH_PUBLIC_KEY
+from evaluation.config import (
+    HF_TOKEN,
+    LIUM_BASE_URL,
+    LIUM_TEMPLATE_ID,
+    LIUM_VOLUMES,
+    SSH_PUBLIC_KEY,
+)
 from shared.targets import TargetConfig
 
 # Pod states that cannot become a usable pod again (lower-cased Lium PodStatus values).
@@ -25,6 +31,21 @@ FAILED_POD_STATUSES = frozenset(
         "deleting",
     }
 )
+
+
+# Where a pod keeps its copy of the target on the competition's volume (mounted at /mnt).
+TARGET_VOLUME = "/mnt/prexon-targets"
+
+
+def worker_settings(volume: bool) -> dict[str, str]:
+    """Environment for the pod's evaluation, sent on stdin: SSH sessions do not see the
+    image's environment, and a command line would show the token."""
+    settings = {"HF_XET_HIGH_PERFORMANCE": "1"}
+    if HF_TOKEN:
+        settings["HF_TOKEN"] = HF_TOKEN
+    if volume:
+        settings["PREXON_TARGET_VOLUME"] = TARGET_VOLUME
+    return settings
 
 
 class RentalRefused(RuntimeError):

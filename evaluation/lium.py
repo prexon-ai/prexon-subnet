@@ -21,7 +21,12 @@ import httpx
 
 from evaluation.config import DATASET_CACHE, SESSION_MAX_COST, SESSION_SECONDS, SSH_PRIVATE_KEY
 from evaluation.datasets.sampling import select_round, validate_plan
-from evaluation.lium_api import FAILED_POD_STATUSES, LiumClient, RentalRefused
+from evaluation.lium_api import (
+    FAILED_POD_STATUSES,
+    LiumClient,
+    RentalRefused,
+    worker_settings,
+)
 from evaluation.runner import EvaluationMode, LocalEvaluationReport, summarize_report
 from evaluation.ssh import SshTransport
 from shared.checkpoints import validate_checkpoint
@@ -436,7 +441,8 @@ def evaluate_on_lium(
                 if code:
                     raise RuntimeError("Could not transfer evaluation inputs")
                 # Detached execution and a remote lock allow host restart without duplicate engines.
-                if run_when_reachable(command("start")):
+                settings = worker_settings(bool(state["request"].get("volume_id")))
+                if run_when_reachable(command("start"), data=json.dumps(settings).encode()):
                     raise RuntimeError("Could not start remote evaluation")
                 returned = staging / "returned.json"
                 while True:

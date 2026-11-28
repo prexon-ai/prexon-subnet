@@ -20,7 +20,7 @@ RUN test -n "$VIRTUAL_ENV" \
     && uv pip install --python "$VIRTUAL_ENV/bin/python" . \
     && ln -s "$VIRTUAL_ENV" .venv \
     && .venv/bin/python -c "import sglang; import torch; import validator.worker; import evaluation.remote"
-ENV PATH="/opt/prexon/.venv/bin:$PATH" PYTHONUNBUFFERED=1 HF_HOME=/mnt/huggingface
+ENV PATH="/opt/prexon/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 # Lium's template starts SSH. Local standalone jobs may override this entrypoint.
 ENTRYPOINT []
 CMD ["sleep", "infinity"]

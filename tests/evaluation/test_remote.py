@@ -77,3 +77,36 @@ def test_remote_install_validates_and_preserves_selected_dataset_plan(tmp_path):
     data, digest = archive(wrong)
     with pytest.raises(ValueError, match="seed"):
         install(tmp_path / "wrong-remote", data, digest)
+
+
+def test_start_gives_the_evaluation_the_settings_sent_on_stdin(tmp_path, monkeypatch):
+    import io
+    import sys
+
+    from evaluation import remote
+
+    started = []
+    monkeypatch.setattr(
+        "evaluation.remote.subprocess.Popen", lambda argv, **kwargs: started.append(kwargs)
+    )
+    settings = {"HF_TOKEN": "hf_secret", "PREXON_TARGET_VOLUME": "/mnt/prexon-targets"}
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(settings).encode())))
+    monkeypatch.setattr(sys, "argv", ["remote", "start", "--root", str(tmp_path)])
+    remote.main()
+    assert started[0]["env"]["HF_TOKEN"] == "hf_secret"
+    assert started[0]["env"]["PREXON_TARGET_VOLUME"] == "/mnt/prexon-targets"
+    assert started[0]["env"]["PATH"]
+
+
+@pytest.mark.parametrize("settings", [b"[]", b'{"HF_TOKEN": 1}', b'{"bad name": "x"}'])
+def test_start_refuses_settings_that_are_not_names_and_text(tmp_path, monkeypatch, settings):
+    import io
+    import sys
+
+    from evaluation import remote
+
+    monkeypatch.setattr("evaluation.remote.subprocess.Popen", lambda *a, **k: pytest.fail())
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(settings)))
+    monkeypatch.setattr(sys, "argv", ["remote", "start", "--root", str(tmp_path)])
+    with pytest.raises(ValueError):
+        remote.main()

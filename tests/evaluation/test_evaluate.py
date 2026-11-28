@@ -97,3 +97,19 @@ def test_local_head_is_frozen_while_training_can_update_original_export(tmp_path
     report = asyncio.run(evaluate(target(), head, tmp_path / "logs"))
     assert report.status == "complete"
     assert loaded_hashes == [original_hash] * 5
+
+
+def test_target_is_cached_on_the_volume_the_host_names(tmp_path, pod, monkeypatch):
+    head, snapshot, _ = pod
+    volumes = []
+
+    async def stage(*args, volume=None, **kwargs):
+        volumes.append(volume)
+        return snapshot
+
+    monkeypatch.setattr("evaluation.measurement.stage_target_async", stage)
+    monkeypatch.setenv("PREXON_TARGET_VOLUME", "/mnt/prexon-targets")
+    asyncio.run(evaluate(target(), head, tmp_path / "with-volume"))
+    monkeypatch.delenv("PREXON_TARGET_VOLUME")
+    asyncio.run(evaluate(target(), head, tmp_path / "without"))
+    assert [str(v) if v else None for v in volumes] == ["/mnt/prexon-targets", None]

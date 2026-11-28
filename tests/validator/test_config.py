@@ -30,6 +30,7 @@ EVALUATION_SECTION = [
     "LIUM_API_KEY",
     "LIUM_TEMPLATE_ID",
     "LIUM_VOLUMES",
+    "HF_TOKEN",
     "SSH_PRIVATE_KEY",
     "SSH_PUBLIC_KEY",
 ]
@@ -192,9 +193,13 @@ def test_only_config_files_read_env():
     readers = sorted(str(p.relative_to(ROOT)) for p in code if "dotenv" in p.read_text())
     assert readers == ["evaluation/config.py", "validator/config.py"]
     keys = VALIDATOR_SECTION + EVALUATION_SECTION
+    # Names the pod's environment variable when sending the token; it reads nothing.
+    forwarded = {("evaluation/lium_api.py", "HF_TOKEN")}
     for path in code:
         if path.name != "config.py":
-            assert not any(f'"{key}"' in path.read_text() for key in keys), path
+            text = path.read_text()
+            name = str(path.relative_to(ROOT))
+            assert not any(f'"{key}"' in text for key in keys if (name, key) not in forwarded), path
 
 
 def test_miner_default_upload_limit_matches_the_api_limit():

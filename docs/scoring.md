@@ -69,7 +69,7 @@ correction/bonus token**. Missing runtime counters remain null. These diagnostic
 have no reward weight.
 
 The example defaults are a 1.5% margin, 95% confidence, 5% maximum regression/drift,
-five rounds, and 20/30/50 workload weights. Calibrate them with the intended
+three rounds, and 20/30/50 workload weights. Calibrate them with the intended
 target, runtime, and hardware before production.
 
 ## Emissions

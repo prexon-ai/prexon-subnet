@@ -72,3 +72,19 @@ def test_ssh_transport_cancellation_reaps_the_process(tmp_path, monkeypatch, set
     with pytest.raises(KeyboardInterrupt):
         transport.run(["a command", "$(not-a-local-shell)"])
     assert processes[0].poll() is not None
+
+
+def test_ssh_transport_sends_data_on_stdin(tmp_path, monkeypatch, set_config):
+    import subprocess
+
+    from evaluation.ssh import SshTransport
+
+    original = subprocess.Popen
+    monkeypatch.setattr(
+        "evaluation.ssh.subprocess.Popen", lambda argv, **kwargs: original(["cat"], **kwargs)
+    )
+    set_config(SSH_KNOWN_HOSTS_DIR=tmp_path / "hosts")
+    returned = tmp_path / "returned"
+    transport = SshTransport("ssh root@example", "pod-1", lambda: None)
+    assert transport.run(["start"], data=b"settings", destination=returned) == 0
+    assert returned.read_bytes() == b"settings"

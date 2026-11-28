@@ -55,6 +55,7 @@ validators use the same section:
 LIUM_API_KEY=your-private-key
 LIUM_TEMPLATE_ID=your-template-id
 LIUM_VOLUMES=Qwen/Qwen3.8-27B=your-volume-id
+HF_TOKEN=your-read-only-token
 SSH_PRIVATE_KEY=~/.ssh/id_ed25519
 SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 ```
@@ -62,9 +63,16 @@ SSH_PUBLIC_KEY=~/.ssh/id_ed25519.pub
 One template serves every competition: it runs the worker image pinned in
 `competitions/shared.json` (image, tag and digest must match it exactly, start command
 `sleep infinity`, port 22). A competition file's `lium_template_id` overrides it. Volumes
-are optional and per competition: Lium mounts a volume at `/mnt`, where the worker keeps
-that model's download (`HF_HOME=/mnt/huggingface`) between rentals, and a volume attaches to
-one pod at a time.
+are optional and per competition: Lium mounts a volume at `/mnt`, and a volume attaches to
+one pod at a time. The first rental downloads the model to the pod's local disk and then
+saves a copy to `/mnt/prexon-targets` on the volume; later rentals copy it from there
+instead of downloading. `target-staging.log` in each run's logs says which way the model
+came and how long it took.
+
+`HF_TOKEN` is optional. Hugging Face serves signed-in downloads faster and with higher
+rate limits. The token is sent to every rented pod, so use a read-only one: the targets
+are public models. Pods download in Hugging Face's high-performance mode
+(`HF_XET_HIGH_PERFORMANCE=1`) either way.
 
 `evaluation/config.py` holds the other values: the Lium URL, the dataset cache and the
 default round limits (`SESSION_SECONDS`, `SESSION_MAX_COST`), which
@@ -74,7 +82,7 @@ A target-specific `lium_template_id` overrides the global template. The host can
 be CPU-only. A [qualified worker image](docker.md) must supply SGLang/Torch and
 working SSH. Frozen heads and the selected plan travel over SSH; host credentials
 and the full dataset corpus stay on the host. The target is downloaded or staged
-inside the GPU pod. Persistent `HF_HOME` storage reuses model downloads.
+inside the GPU pod; a competition's volume keeps a copy between rentals.
 
 Set `backend: "pod"` to evaluate in an existing GPU environment. If the runtime is
 installed system-wide, create the project venv with

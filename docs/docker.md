@@ -118,9 +118,11 @@ Python environment (`$VIRTUAL_ENV`, `/opt/sglang` in SGLang images), leaving SGL
 packages as they are; `/opt/prexon/.venv` points at that environment. Verify startup
 and GPU topology in a pilot.
 
-Set `HF_HOME=/mnt/huggingface` for persistent downloads and
-`PREXON_TARGET_CACHE` for local staging (default `/tmp/prexon-targets`). Workers
-receive scoped job URLs, never the controller's wallet or provider credentials.
+Processes started over SSH do not see the image's environment, so the host sends the
+worker its settings on stdin when it starts a job: `HF_XET_HIGH_PERFORMANCE=1`, the
+`HF_TOKEN` from `.env` if set, and `PREXON_TARGET_VOLUME` when a volume is attached. The
+target is staged on local disk (`PREXON_TARGET_CACHE`, default `/tmp/prexon-targets`).
+Workers receive scoped job URLs, never the controller's wallet or provider credentials.
 Standalone evaluation uses the same image through `evaluation.remote`, with
 heads and reports transferred over SSH. Rebuild and pin the worker image after
 runtime/protocol changes.

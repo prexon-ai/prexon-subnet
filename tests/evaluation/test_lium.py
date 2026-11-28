@@ -55,7 +55,9 @@ def rental(tmp_path, monkeypatch, pod, set_config):
             assert pod_id == "pod-1"
             self.tick = tick
 
-        def run(self, argv, *, source=None, destination=None, limit=0, timeout_seconds=None):
+        def run(
+            self, argv, *, source=None, destination=None, limit=0, timeout_seconds=None, data=None
+        ):
             from evaluation.remote import install
 
             self.tick()
@@ -169,6 +171,43 @@ def test_a_failed_status_request_does_not_end_the_rental(rental, monkeypatch):
     assert not failures
     assert report.score == pytest.approx(2) and report.rental_cleanup == "deleted"
     assert calls.count("rent") == 1
+
+
+@pytest.mark.parametrize(
+    "token, volume, expected",
+    [
+        (
+            "hf_secret",
+            "vol",
+            {
+                "HF_TOKEN": "hf_secret",
+                "HF_XET_HIGH_PERFORMANCE": "1",
+                "PREXON_TARGET_VOLUME": "/mnt/prexon-targets",
+            },
+        ),
+        ("", None, {"HF_XET_HIGH_PERFORMANCE": "1"}),
+    ],
+)
+def test_pod_gets_its_settings_and_token_on_stdin_never_in_the_command(
+    rental, monkeypatch, set_config, token, volume, expected
+):
+    lium, config, head, output, calls, provider, _ = rental
+    set_config(HF_TOKEN=token)
+    request = {"termination_hours": 1, **({"volume_id": volume} if volume else {})}
+    monkeypatch.setattr(provider, "build_request", lambda self, session, profile: request)
+    original = lium.SshTransport.run
+    sent = []
+
+    def run(self, argv, **kwargs):
+        if argv[3] == "start":
+            sent.append((argv, json.loads(kwargs["data"])))
+        return original(self, argv, **kwargs)
+
+    monkeypatch.setattr(lium.SshTransport, "run", run)
+    lium.evaluate_on_lium(config, head, output, api_key="secret")
+    ((argv, settings),) = sent
+    assert "hf_secret" not in " ".join(argv)
+    assert settings == expected
 
 
 def test_rental_waits_for_ssh_on_a_pod_that_reports_running_early(rental, monkeypatch):

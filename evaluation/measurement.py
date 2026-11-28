@@ -131,6 +131,7 @@ async def measure_configurations(
                 Path(os.environ.get("PREXON_TARGET_CACHE", "/tmp/prexon-targets")),
                 deadline,
                 log_dir / "target-staging.log",
+                volume=Path(volume) if (volume := os.environ.get("PREXON_TARGET_VOLUME")) else None,
             )
         elif not target_path.is_dir() or not (target_path / "config.json").is_file():
             raise ValueError("Local target snapshot needs a config.json")

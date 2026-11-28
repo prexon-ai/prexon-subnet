@@ -19,3 +19,4 @@ dist/
 /outputs/
 *.sqlite*
 *.log
+.superpowers/

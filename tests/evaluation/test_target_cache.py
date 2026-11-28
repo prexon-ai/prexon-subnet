@@ -9,25 +9,61 @@ from evaluation.cache import stage_target, stage_target_async
 from tests.factories import target
 
 
-def test_target_is_staged_once_from_immutable_snapshot_with_links_resolved(tmp_path):
-    shared = tmp_path / "shared"
-    shared.mkdir()
-    weight = shared / "weight"
-    weight.write_bytes(b"target weights")
-    snapshot = shared / "snapshot"
-    snapshot.mkdir()
-    (snapshot / "model.safetensors").symlink_to(weight)
-    calls = []
-
-    def resolve(model_id, revision):
+def fake_download(calls):
+    def download(model_id, revision, destination):
         calls.append((model_id, revision))
-        return str(snapshot)
+        destination.mkdir(parents=True)
+        (destination / "config.json").write_text("{}")
+        (destination / "model.safetensors").write_bytes(b"target weights")
+        cache = destination / ".cache/huggingface"
+        cache.mkdir(parents=True)
+        (cache / "download.metadata").write_text("bookkeeping")
 
-    local = stage_target(target(), tmp_path / "local", resolver=resolve)
-    assert not (local / "model.safetensors").is_symlink()
+    return download
+
+
+def test_target_is_downloaded_once_straight_into_local_staging(tmp_path):
+    calls = []
+    local = stage_target(target(), tmp_path / "local", download=fake_download(calls))
     assert (local / "model.safetensors").read_bytes() == b"target weights"
-    assert stage_target(target(), tmp_path / "local", resolver=resolve) == local
+    assert not (local / ".cache").exists()
+    assert stage_target(target(), tmp_path / "local", download=fake_download(calls)) == local
     assert calls == [("org/model1", "a" * 40)]
+
+
+def test_download_is_saved_to_the_volume_for_later_rentals(tmp_path):
+    calls = []
+    volume = tmp_path / "volume"
+    stage_target(target(), tmp_path / "first", download=fake_download(calls), volume=volume)
+
+    def no_download(*args):
+        pytest.fail("Downloaded although the volume holds a complete copy")
+
+    local = stage_target(target(), tmp_path / "second", download=no_download, volume=volume)
+    assert (local / "model.safetensors").read_bytes() == b"target weights"
+    assert (local / "config.json").read_text() == "{}"
+    assert not (local / ".cache").exists()
+    assert calls == [("org/model1", "a" * 40)]
+
+
+def test_volume_copy_that_does_not_match_its_record_is_downloaded_again(tmp_path):
+    calls = []
+    volume = tmp_path / "volume"
+    stage_target(target(), tmp_path / "first", download=fake_download(calls), volume=volume)
+    (copy,) = [p for p in volume.iterdir() if p.is_dir()]
+    (copy / "model.safetensors").write_bytes(b"cut short")
+    local = stage_target(
+        target(), tmp_path / "second", download=fake_download(calls), volume=volume
+    )
+    assert (local / "model.safetensors").read_bytes() == b"target weights"
+    assert len(calls) == 2
+
+
+def test_volume_that_cannot_be_written_does_not_stop_the_evaluation(tmp_path):
+    volume = tmp_path / "volume"
+    volume.write_text("not a directory")
+    local = stage_target(target(), tmp_path / "local", download=fake_download([]), volume=volume)
+    assert (local / "model.safetensors").read_bytes() == b"target weights"
 
 
 def test_target_staging_deadline_kills_process_without_executor_shutdown_delay(

@@ -193,3 +193,46 @@ def test_lium_rental_mounts_only_its_own_competitions_volume(tmp_path, set_confi
     session = {"id": "a" * 32, "started_at": 1, "deadline": 3601}
     assert provider.build_request(session, target(1))["volume_id"] == "vol"
     assert "volume_id" not in provider.build_request(session, target(2))
+
+
+@pytest.mark.parametrize("model, volume", [(1, True), (2, False)])
+def test_lium_worker_gets_settings_and_token_on_stdin_never_in_the_command(
+    monkeypatch, set_config, model, volume
+):
+    import json
+
+    from tests.factories import job
+
+    set_config(HF_TOKEN="hf_secret", LIUM_VOLUMES={"org/model1": "vol"})
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+    provider = LiumProvider("key", 100, client=client)
+    monkeypatch.setattr(provider, "status", lambda pod_id: {"ssh_connect_cmd": "ssh root@host"})
+    runs = []
+    monkeypatch.setattr(
+        "validator.providers.lium.subprocess.run",
+        lambda argv, **kwargs: runs.append((argv, kwargs)),
+    )
+    provider.launch("pod-1", job(target(model)), "https://job", "https://result")
+    ((argv, kwargs),) = runs
+    settings = json.loads(kwargs["input"])["env"]
+    assert "hf_secret" not in " ".join(argv)
+    assert settings["HF_TOKEN"] == "hf_secret" and settings["HF_XET_HIGH_PERFORMANCE"] == "1"
+    assert ("PREXON_TARGET_VOLUME" in settings) is volume
+
+
+def test_lium_launch_script_starts_the_worker_with_the_settings_it_receives(monkeypatch):
+    import io
+    import json
+    import os
+    import subprocess
+    import sys
+
+    from validator.providers.lium import _LAUNCH
+
+    started = []
+    monkeypatch.setattr(subprocess, "Popen", lambda argv, **kwargs: started.append(kwargs))
+    monkeypatch.setattr(os, "makedirs", lambda *args, **kwargs: None)
+    sent = {"job_url": "j", "result_url": "r", "env": {"HF_TOKEN": "hf_secret"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(sent)))
+    exec(_LAUNCH, {"open": lambda *args: io.BytesIO()})
+    assert started[0]["env"]["HF_TOKEN"] == "hf_secret" and started[0]["env"]["PATH"]

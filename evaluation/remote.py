@@ -1,4 +1,5 @@
-"""Fixed SSH protocol for development evaluation in a rented pod; never receives API keys."""
+"""Fixed SSH protocol for development evaluation in a rented pod. It never receives the
+host's provider or wallet keys; at most a Hugging Face token for downloading the target."""
 
 from __future__ import annotations
 
@@ -6,6 +7,8 @@ import argparse
 import fcntl
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -128,6 +131,14 @@ def main() -> None:
     if args.action == "upload":
         install(root, sys.stdin.buffer, args.digest)
     elif args.action == "start":
+        # SSH sessions do not see the image's environment, so the host sends the settings
+        # (and any token) on stdin, never on a command line.
+        settings = json.loads(sys.stdin.read(64 * 1024) or "{}")
+        if not isinstance(settings, dict) or not all(
+            isinstance(value, str) and re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+            for name, value in settings.items()
+        ):
+            raise ValueError("Settings must map environment names to text")
         with (root / "launcher.log").open("ab") as log:
             subprocess.Popen(
                 [sys.executable, "-m", "evaluation.remote", "run", "--root", str(root)],
@@ -135,6 +146,7 @@ def main() -> None:
                 stdout=log,
                 stderr=log,
                 start_new_session=True,
+                env={**os.environ, **settings},
             )
     elif args.action == "run":
         run(root)

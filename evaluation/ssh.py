@@ -75,11 +75,18 @@ class SshTransport:
         destination: Path | None = None,
         limit: int = 32 * 1024**2,
         timeout_seconds: float | None = None,
+        data: bytes | None = None,
     ) -> int:
         """Stream files without shell evaluation locally; monitor cancellation and spend."""
         with tempfile.TemporaryFile() as discard:
             started = time.monotonic()
-            incoming = source.open("rb") if source else subprocess.DEVNULL
+            incoming = (
+                source.open("rb")
+                if source
+                else subprocess.PIPE
+                if data is not None
+                else subprocess.DEVNULL
+            )
             outgoing = destination.open("wb") if destination else discard
             process = None
             try:
@@ -90,6 +97,10 @@ class SshTransport:
                     stderr=discard,
                     start_new_session=True,
                 )
+                if data is not None and process.stdin:
+                    # Small settings only: the pipe takes them without waiting for a reader.
+                    process.stdin.write(data)
+                    process.stdin.close()
                 while process.poll() is None:
                     self.tick()
                     if (
@@ -113,7 +124,7 @@ class SshTransport:
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
-                if source and not isinstance(incoming, int):
+                if source:
                     incoming.close()
                 if destination:
                     outgoing.close()
